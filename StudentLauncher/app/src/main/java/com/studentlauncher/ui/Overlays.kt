@@ -1,5 +1,7 @@
 package com.studentlauncher.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,6 +10,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -34,7 +40,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,9 +55,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -73,10 +80,10 @@ fun Scrim(onTap: () -> Unit) {
 
 /** Dimming tap-catcher whose alpha follows an enter animation without recomposing. */
 @Composable
-fun FadeScrim(onTap: () -> Unit, progress: State<Float>, max: Float = 0.22f) {
+fun FadeScrim(onTap: () -> Unit, progress: Float, max: Float = 0.22f) {
     Box(
         Modifier.fillMaxSize()
-            .graphicsLayer { alpha = (progress.value.coerceIn(0f, 1f)) * max }
+            .graphicsLayer { alpha = progress.coerceIn(0f, 1f) * max }
             .background(Color.Black)
             .pointerInput(Unit) { detectTapGestures { onTap() } }
     )
@@ -85,10 +92,12 @@ fun FadeScrim(onTap: () -> Unit, progress: State<Float>, max: Float = 0.22f) {
 /** Bottom sheet used by widgets, about and pause sheets. Springs up, dims the home screen. */
 @Composable
 fun BottomSheet(onDismiss: () -> Unit, maxHeightFrac: Float = 0.82f, content: @Composable ColumnScope.() -> Unit) {
-    val e = enterProgress(spring(dampingRatio = 0.86f, stiffness = 320f))
+    val visible = remember { MutableTransitionState(true) }
+    LaunchedEffect(visible.targetState) { if (!visible.targetState) onDismiss() }
+    val e by animateFloatAsState(if (visible.targetState) 1f else 0f, Motion.Macro, label = "bs")
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val maxH = maxHeight * maxHeightFrac
-        FadeScrim(onDismiss, e)
+        FadeScrim({ visible.targetState = false }, e)
         Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.BottomCenter) {
             Column(
                 Modifier
@@ -96,7 +105,7 @@ fun BottomSheet(onDismiss: () -> Unit, maxHeightFrac: Float = 0.82f, content: @C
                     .padding(14.dp)
                     .fillMaxWidth()
                     .heightIn(max = maxH)
-                    .graphicsLayer { translationY = (1f - e.value) * size.height * 1.15f }
+                    .graphicsLayer { translationY = (1f - e) * size.height * 1.15f }
                     .glass(32.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(20.dp),
@@ -108,7 +117,9 @@ fun BottomSheet(onDismiss: () -> Unit, maxHeightFrac: Float = 0.82f, content: @C
 
 @Composable
 fun ContextMenu(vm: LauncherViewModel, app: AppInfo, anchor: Rect, screenW: Dp, topLimit: Float) {
-    val e = enterProgress(spring(dampingRatio = 0.7f, stiffness = 420f))
+    val visible = remember { MutableTransitionState(true) }
+    LaunchedEffect(visible.targetState) { if (!visible.targetState) vm.ctxApp = null }
+    val e by animateFloatAsState(if (visible.targetState) 1f else 0f, Motion.Macro, label = "ctx")
     val density = LocalDensity.current
     var h by remember { mutableIntStateOf(0) }
     val wPx = with(density) { 216.dp.toPx() }
@@ -124,9 +135,9 @@ fun ContextMenu(vm: LauncherViewModel, app: AppInfo, anchor: Rect, screenW: Dp, 
             .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
             .width(216.dp)
             .graphicsLayer {
-                val s = 0.82f + 0.18f * e.value
+                val s = 0.82f + 0.18f * e
                 scaleX = s; scaleY = s
-                alpha = e.value.coerceIn(0f, 1f)
+                alpha = e.coerceIn(0f, 1f)
                 transformOrigin = TransformOrigin(0.2f, originY)
             }
             .onSizeChanged { h = it.height }
@@ -135,18 +146,22 @@ fun ContextMenu(vm: LauncherViewModel, app: AppInfo, anchor: Rect, screenW: Dp, 
     ) {
         val pinned = app.pkg in vm.pinned
         val docked = app.pkg in vm.dock
-        CtxItem(if (pinned) "Remove from home" else "Pin to home") { vm.togglePin(app.pkg); vm.ctxApp = null }
-        CtxItem(if (docked) "Remove from dock" else "Add to dock") { vm.toggleDock(app.pkg); vm.ctxApp = null }
-        CtxItem(if (app.pkg in vm.flagged) "Not distracting" else "Mark as distracting") { vm.toggleFlag(app.pkg); vm.ctxApp = null }
-        CtxItem(if (app.pkg in vm.studyApps) "Not a study app" else "Mark as study app") { vm.toggleStudyApp(app.pkg); vm.ctxApp = null }
-        CtxItem("App info") { vm.openAppInfo(app.pkg); vm.ctxApp = null }
+        CtxItem(if (pinned) "Remove from home" else "Pin to home") { visible.targetState = false; vm.togglePin(app.pkg) }
+        CtxItem(if (docked) "Remove from dock" else "Add to dock") { visible.targetState = false; vm.toggleDock(app.pkg) }
+        CtxItem(if (app.pkg in vm.flagged) "Not distracting" else "Mark as distracting") { visible.targetState = false; vm.toggleFlag(app.pkg) }
+        CtxItem(if (app.pkg in vm.studyApps) "Not a study app" else "Mark as study app") { visible.targetState = false; vm.toggleStudyApp(app.pkg) }
+        CtxItem("App info") { visible.targetState = false; vm.openAppInfo(app.pkg) }
     }
 }
 
 @Composable
 private fun CtxItem(label: String, onClick: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Box(
-        Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(14.dp)).tap(onClick).padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(14.dp)).tap {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        }.padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart
     ) { Txt(label, 14f) }
 }
@@ -157,9 +172,10 @@ fun PauseSheet(vm: LauncherViewModel, app: AppInfo, onCancel: () -> Unit, onOpen
     var left by remember { mutableIntStateOf(vm.pauseSec) }
     LaunchedEffect(Unit) { while (left > 0) { delay(1000); left-- } }
     val breath = rememberInfiniteTransition(label = "breath")
+    val motion = LocalMotionScale.current
     val bs by breath.animateFloat(
         0.62f, 1f,
-        infiniteRepeatable(tween(4000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "bs"
+        infiniteRepeatable(tween((4000 * motion).coerceAtLeast(1f).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "bs"
     )
     BottomSheet(onCancel, 0.6f) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -189,7 +205,7 @@ fun ToastPill(text: String) {
 /** The tapped icon grows into a full-screen sheet (iPhone-style zoom), then collapses on return. */
 @Composable
 fun LaunchOverlay(anim: LaunchAnim?, dark: Boolean) {
-    val p = animateFloatAsState(if (anim != null) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = 320f), label = "launch")
+    val p = animateFloatAsState(if (anim != null) 1f else 0f, Motion.Macro, label = "launch")
     var last by remember { mutableStateOf<LaunchAnim?>(null) }
     LaunchedEffect(anim) { if (anim != null) last = anim }
     val cur = anim ?: last

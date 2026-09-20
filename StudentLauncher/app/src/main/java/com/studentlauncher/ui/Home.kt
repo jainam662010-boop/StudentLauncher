@@ -19,6 +19,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -70,6 +72,7 @@ import com.studentlauncher.data.DockStyle
 import com.studentlauncher.data.MenuType
 import com.studentlauncher.data.ThemeMode
 import com.studentlauncher.data.ViewMode
+import com.studentlauncher.data.InternalDestination
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -112,13 +115,19 @@ fun LauncherRoot(
         }
         val env = remember(set, dark) { GlassEnv(set?.blurred, dark) }
 
-        CompositionLocalProvider(LocalColors provides colors, LocalGlass provides env) {
+        CompositionLocalProvider(LocalColors provides colors, LocalGlass provides env, LocalMotionScale provides vm.effectiveMotion()) {
             set?.let { s ->
-                Crossfade(s, animationSpec = tween(700), label = "wallpaper") { cur ->
+                val motion = LocalMotionScale.current
+                Crossfade(s, animationSpec = tween((700 * motion).coerceAtLeast(1f).toInt()), label = "wallpaper") { cur ->
                     Image(cur.full, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
                 }
             }
-            HomeLayer(vm, pickPhoto, addWidget, askNotifications, maxWidth, maxHeight)
+            when {
+                !vm.onboardingComplete -> Onboarding(vm, askNotifications)
+                vm.destination == InternalDestination.Plan -> PlanApp(vm)
+                vm.destination == InternalDestination.Settings -> SettingsApp(vm, pickPhoto, askNotifications)
+                else -> HomeLayer(vm, pickPhoto, addWidget, askNotifications, maxWidth, maxHeight)
+            }
         }
     }
 }
@@ -140,7 +149,6 @@ fun HomeLayer(
     val dens = LocalDensity.current
     var launching by remember { mutableStateOf<LaunchAnim?>(null) }
     var lastToast by remember { mutableStateOf("") }
-    val anchors = remember { mutableStateMapOf<MenuType, Float>() }
 
     // Phase 1: 0 = home, 1 = widget board. Swipe anywhere; dock stays put until Phase 2.
     val pagerState = rememberPagerState(pageCount = { 2 })
@@ -150,14 +158,16 @@ fun HomeLayer(
     // recomposes the screen (that is what keeps the transition smooth).
     val prog = remember { Animatable(0f) }
     LaunchedEffect(vm.view) {
-        prog.animateTo(if (vm.view == ViewMode.All) 1f else 0f, spring(dampingRatio = 0.88f, stiffness = 240f))
+        val target = if (vm.view == ViewMode.All) 1f else 0f
+        if (vm.effectiveMotion() < 0.05f) prog.snapTo(target)
+        else prog.animateTo(target, spring(dampingRatio = 0.88f, stiffness = 240f / vm.effectiveMotion().coerceAtLeast(.2f)))
     }
     val showHome by remember { derivedStateOf { prog.value < 0.99f } }
     val showPanel by remember { derivedStateOf { prog.value > 0.001f } }
 
     val compact = screenH < 640.dp
     val topPad = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topLimitPx = with(dens) { (topPad + MENU_H + 8.dp).toPx() }
+    val topLimitPx = with(dens) { (topPad + 72.dp).toPx() }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { launching = null }
     BackHandler {
@@ -198,7 +208,7 @@ fun HomeLayer(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.statusBarsPadding().height(MENU_H + 8.dp))
+            Spacer(Modifier.statusBarsPadding().height(72.dp))
 
             HorizontalPager(
                 state = pagerState,
@@ -219,14 +229,7 @@ fun HomeLayer(
             }
         }
 
-        if (vm.menu != MenuType.None) Scrim { vm.menu = MenuType.None }
-        MenuBar(vm, { t, x -> anchors[t] = x }, Modifier.align(Alignment.TopCenter))
-
-        val ddTop = topPad + MENU_H + 6.dp
-        val ddMax = screenH * 0.74f
-        Dropdown(vm.menu == MenuType.Focus, anchors[MenuType.Focus] ?: 0f, screenW, ddMax, ddTop) { FocusMenu(vm, askNotifications) }
-        Dropdown(vm.menu == MenuType.Widgets, anchors[MenuType.Widgets] ?: 0f, screenW, ddMax, ddTop) { WidgetsMenu(vm) }
-        Dropdown(vm.menu == MenuType.Style, anchors[MenuType.Style] ?: 0f, screenW, ddMax, ddTop) { StyleMenu(vm, pickPhoto) }
+        QuietHomeHeader(vm, Modifier.align(Alignment.TopCenter).statusBarsPadding())
 
         val ca = vm.ctxApp
         if (ca != null) {
@@ -253,12 +256,26 @@ fun HomeLayer(
 
         AnimatedVisibility(
             vm.toast != null,
-            Modifier.align(Alignment.TopCenter).padding(top = topPad + MENU_H + 12.dp),
-            enter = slideInVertically(spring(0.7f, 400f)) { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut()
+            Modifier.align(Alignment.TopCenter).padding(top = topPad + 84.dp),
+            enter = slideInVertically(Motion.Offset) { -it } + fadeIn(),
+            exit = slideOutVertically(Motion.Offset) { -it } + fadeOut()
         ) { ToastPill(lastToast) }
 
         LaunchOverlay(launching, c.dark)
+    }
+}
+
+@Composable
+private fun QuietHomeHeader(vm: LauncherViewModel, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    val now = rememberNow()
+    val is24 = android.text.format.DateFormat.is24HourFormat(LocalContext.current)
+    Row(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")).uppercase(), 11f, c.fg2, androidx.compose.ui.text.font.FontWeight.Bold)
+            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern(if (is24) "HH:mm" else "h:mm a")), 25f, c.fg, androidx.compose.ui.text.font.FontWeight.SemiBold)
+        }
+        PillButton("Plan", { vm.destination = InternalDestination.Plan })
     }
 }
 
@@ -288,10 +305,9 @@ private fun HomePageContent(
         val wEnd = 16.dp + (if (side == AlphaSide.Right) 26.dp else 0.dp) + (if (railRight) 66.dp else 0.dp)
 
         if (showHome) {
-            Widgets(
-                vm, wStart, wEnd, compact, areaH * 0.62f,
+            Column(
                 Modifier
-                    .align(Alignment.TopCenter)
+                    .fillMaxSize()
                     .graphicsLayer {
                         val p = prog.value
                         alpha = 1f - 0.9f * p
@@ -300,24 +316,28 @@ private fun HomePageContent(
                         transformOrigin = TransformOrigin(0.5f, 0f)
                         depthBlur(p)
                     }
-            )
-            HomeApps(
-                vm, launchApp, openMenu,
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        val p = prog.value
-                        alpha = 1f - p
-                        translationX = -48f * p * density
-                        scaleX = 1f - 0.05f * p
-                        scaleY = 1f - 0.05f * p
-                        transformOrigin = TransformOrigin(0f, 1f)
-                        depthBlur(p)
-                    }
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = startPad, end = endPad)
-            )
+            ) {
+                Widgets(
+                    vm, wStart, wEnd, compact, areaH * 0.48f,
+                    Modifier.fillMaxWidth().weight(1f)
+                )
+                HomeApps(
+                    vm, launchApp, openMenu,
+                    Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            val p = prog.value
+                            alpha = 1f - p
+                            translationX = -48f * p * density
+                            scaleX = 1f - 0.05f * p
+                            scaleY = 1f - 0.05f * p
+                            transformOrigin = TransformOrigin(0f, 1f)
+                            depthBlur(p)
+                        }
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = startPad, end = endPad)
+                )
+            }
         }
 
         if (showPanel) {

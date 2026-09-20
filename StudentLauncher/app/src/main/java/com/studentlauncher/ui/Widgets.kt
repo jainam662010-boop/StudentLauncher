@@ -12,6 +12,8 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -19,6 +21,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -188,30 +192,30 @@ private fun buildRows(items: List<WidgetItem>): List<List<WidgetItem>> {
     while (i < items.size) {
         val a = items[i]
         val b = items.getOrNull(i + 1)
-        if (a.half && b != null && b.half) { rows.add(listOf(a, b)); i += 2 } else { rows.add(listOf(a)); i += 1 }
+        if (a.effectiveHalf && b != null && b.effectiveHalf) { rows.add(listOf(a, b)); i += 2 } else { rows.add(listOf(a)); i += 1 }
     }
     return rows
 }
 
 @Composable
 private fun Appear(content: @Composable () -> Unit) {
+    val motion = LocalMotionScale.current
     val s = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
         visibleState = s,
-        enter = fadeIn(spring(stiffness = 260f)) + scaleIn(spring(0.8f, 360f), initialScale = 0.92f) +
-            expandVertically(spring(0.85f, 320f)),
-        exit = fadeOut()
+        enter = if (motion < .05f) fadeIn(tween(0)) else fadeIn(tween((180 * motion).toInt())) + scaleIn(Motion.Macro, initialScale = 0.96f) + expandVertically(tween((220 * motion).toInt())),
+        exit = fadeOut() + scaleOut(Motion.Macro, targetScale = 0.96f) + shrinkVertically(tween((180 * motion).toInt()))
     ) { content() }
 }
 
 @Composable
 fun Widgets(vm: LauncherViewModel, padStart: Dp, padEnd: Dp, compact: Boolean, maxH: Dp, modifier: Modifier) {
     val c = LocalColors.current
-    val rows = buildRows(vm.widgets.toList())
+    val rows = buildRows(vm.homeWidgets.toList())
     Column(
         modifier
             .fillMaxWidth()
-            .animateContentSize(spring(dampingRatio = 0.85f, stiffness = 300f))
+            .animateContentSize(Motion.Size)
             .heightIn(max = maxH)
             .verticalScroll(rememberScrollState())
             .padding(start = padStart, end = padEnd),
@@ -240,46 +244,151 @@ private fun WidgetFrame(w: WidgetItem, vm: LauncherViewModel, content: @Composab
     val haptic = LocalHapticFeedback.current
     val fg = toneColor(w.tone, c)
     val fg2 = fg.copy(alpha = 0.6f)
-    val base = Modifier.fillMaxWidth()
-    val framed = when (w.bg) {
-        WidgetBg.Glass -> base.glass(28.dp)
-        WidgetBg.Solid -> base.clip(RoundedCornerShape(28.dp)).background(if (c.dark) Color(0xFF1C1C1E) else Color.White)
-        WidgetBg.None -> base
+    var showMenu by remember { mutableStateOf(false) }
+    var resizeAccum by remember { mutableFloatStateOf(0f) }
+
+    Column(Modifier.fillMaxWidth()) {
+        // Widget content with long-press for context menu
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    when (w.bg) {
+                        WidgetBg.Glass -> Modifier.glass(12.dp).border(1.dp, c.fg2.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
+                        WidgetBg.Solid -> Modifier.clip(RoundedCornerShape(12.dp)).background(if (c.dark) Color(0xFF1C1C1E) else Color.White).border(1.dp, c.fg2.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
+                        WidgetBg.None -> Modifier
+                    }
+                )
+                .pointerInput(w.id) {
+                    detectTapGestures(onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showMenu = true
+                    })
+                }
+                .padding(if (w.bg == WidgetBg.None) 6.dp else 16.dp)
+        ) {
+            Column { content(fg, fg2) }
+        }
+
+        // Resize handle — separate touch target, NOT inside widget gesture scope
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(24.dp)
+                .pointerInput(w.id, w.height) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        resizeAccum = 0f
+                        do {
+                            val ev = awaitPointerEvent()
+                            val ch = ev.changes.first()
+                            resizeAccum += ch.position.y - ch.previousPosition.y
+                            ch.consume()
+                        } while (ev.changes.any { it.pressed })
+                        val steps = (resizeAccum / 36f).toInt()
+                        if (steps != 0) {
+                            val newH = (w.height + steps).coerceIn(1, 3)
+                            if (newH != w.height) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                vm.setWidgetHeight(w.id, newH)
+                            }
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(c.fg2.copy(alpha = 0.4f))
+            )
+        }
+
+        if (showMenu) {
+            WidgetContextMenu(
+                w = w,
+                onEdit = { vm.editWidgetId = w.id; showMenu = false },
+                onRemove = { vm.removeWidget(w.id); showMenu = false },
+                onSize = { h -> vm.setWidgetHeight(w.id, h); showMenu = false },
+                onDismiss = { showMenu = false }
+            )
+        }
     }
-    Column(
-        framed
-            .pointerInput(w.id) {
-                detectTapGestures(onLongPress = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    vm.editWidgetId = w.id
-                })
-            }
-            .padding(if (w.bg == WidgetBg.None) 6.dp else 16.dp)
-    ) { content(fg, fg2) }
 }
 
 @Composable
-private fun WidgetBody(w: WidgetItem, vm: LauncherViewModel, compact: Boolean) {
+private fun WidgetContextMenu(w: WidgetItem, onEdit: () -> Unit, onRemove: () -> Unit, onSize: (Int) -> Unit, onDismiss: () -> Unit) {
+    val c = LocalColors.current
+    val haptic = LocalHapticFeedback.current
+    val labels = listOf(1 to "Small", 2 to "Medium", 3 to "Tall")
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onDismiss() } }) {
+        Column(
+            Modifier
+                .align(Alignment.Center)
+                .width(180.dp)
+                .glass(20.dp)
+                .padding(8.dp)
+                .pointerInput(Unit) { detectTapGestures {} }
+        ) {
+            CtxMenuRow("Edit") { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onEdit() }
+            CtxMenuRow("Remove", danger = true) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onRemove() }
+            Txt("Size", 11f, c.fg2, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                labels.forEach { (h, label) ->
+                    val selected = w.height == h
+                    Box(
+                        Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(8.dp))
+                            .background(if (selected) c.fg else c.track)
+                            .tap { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onSize(h) },
+                        contentAlignment = Alignment.Center
+                    ) { Txt(label, 11f, if (selected) c.knobOn else c.fg) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CtxMenuRow(label: String, danger: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(10.dp)).tap(onClick = onClick).padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart
+    ) { Txt(label, 14f, if (danger) LocalColors.current.accent else LocalColors.current.fg) }
+}
+
+@Composable
+fun WidgetBody(w: WidgetItem, vm: LauncherViewModel, compact: Boolean) {
     if (w.type == WT.ANDROID) {
         HostedWidget(vm, w, Modifier.fillMaxWidth())
         return
     }
     val accent = LocalColors.current.accent
+    // Height 1=80dp, 2=120dp, 3=180dp — controls max vertical space
+    val maxContentH = when (w.height) {
+        1 -> if (compact) 60.dp else 80.dp
+        3 -> if (compact) 140.dp else 180.dp
+        else -> if (compact) 90.dp else 120.dp
+    }
     WidgetFrame(w, vm) { fg, fg2 ->
-        when (w.type) {
-            WT.CLOCK -> ClockContent(w, fg, fg2, accent)
-            WT.DATE -> DateContent(fg, fg2)
-            WT.WEEK -> WeekContent(w, fg, fg2, accent)
-            WT.BATTERY -> BatteryContent(fg, accent)
-            WT.NEXT -> NextContent(w, fg, fg2)
-            WT.COUNTDOWN -> CountdownContent(w, fg, fg2, accent)
-            WT.TIMER -> TimerContent(w, vm, fg, fg2, accent)
-            WT.TASKS -> TasksContent(w, vm, fg, fg2, accent)
-            WT.QUICK -> QuickContent(fg)
-            WT.SPHERE -> Box(Modifier.fillMaxWidth().height(if (compact) 96.dp else 124.dp)) {
-                DotSphere(Modifier.fillMaxSize(), fg, accent)
+        Column(Modifier.heightIn(max = maxContentH)) {
+            when (w.type) {
+                WT.CLOCK -> ClockContent(w, fg, fg2, accent)
+                WT.DATE -> DateContent(fg, fg2)
+                WT.WEEK -> WeekContent(w, fg, fg2, accent)
+                WT.BATTERY -> BatteryContent(fg, accent)
+                WT.NEXT -> NextContent(w, fg, fg2)
+                WT.COUNTDOWN -> CountdownContent(w, fg, fg2, accent)
+                WT.TIMER -> TimerContent(w, vm, fg, fg2, accent)
+                WT.TASKS -> TasksContent(w, vm, fg, fg2, accent)
+                WT.QUICK -> QuickContent(fg)
+                WT.SPHERE -> Box(Modifier.fillMaxWidth().height(if (compact) 60.dp else 80.dp)) {
+                    DotSphere(Modifier.fillMaxSize(), fg, accent)
+                }
+                WT.GLYPH -> GlyphContent(w, vm, fg, accent, compact)
             }
-            WT.GLYPH -> GlyphContent(w, vm, fg, accent, compact)
         }
     }
 }
@@ -465,8 +574,12 @@ private fun TimerContent(w: WidgetItem, vm: LauncherViewModel, fg: Color, fg2: C
 
 @Composable
 private fun WPill(label: String, fg: Color, onClick: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Box(
-        Modifier.clip(CircleShape).background(fg.copy(alpha = 0.14f)).tap(onClick).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.clip(CircleShape).background(fg.copy(alpha = 0.14f)).tap {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        }.padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) { Txt(label, 12f, fg) }
 }
@@ -564,11 +677,12 @@ private fun GlyphContent(w: WidgetItem, vm: LauncherViewModel, fg: Color, accent
 fun GlyphMatrix(mode: String, color: Color, accent: Color, modifier: Modifier) {
     val now = rememberNow()
     var t by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
-        var last = 0L
-        while (true) {
+    val motion = LocalMotionScale.current
+    LaunchedEffect(motion) {
+        var last = -1L
+        while (motion > .05f) {
             val n = withFrameNanos { it }
-            if (last != 0L) t += (n - last) / 1e9f
+            if (last >= 0) t += (n - last) / 1e9f * motion
             last = n
         }
     }
@@ -633,16 +747,17 @@ fun DotSphere(modifier: Modifier, color: Color, accent: Color) {
     var yaw by remember { mutableFloatStateOf(0f) }
     var tilt by remember { mutableFloatStateOf(0.35f) }
     var dragging by remember { mutableStateOf(false) }
+    val motion = LocalMotionScale.current
 
-    LaunchedEffect(Unit) {
-        var last = 0L
-        while (true) {
-            val t = withFrameNanos { it }
-            if (last != 0L && !dragging) {
-                yaw += (t - last) / 1e9f * 0.5f
+    LaunchedEffect(motion) {
+        var last = -1L
+        while (motion > .05f) {
+            val n = withFrameNanos { it }
+            if (last >= 0 && !dragging) {
+                yaw += (n - last) / 1e9f * 0.5f * motion
                 tilt += (0.35f - tilt) * 0.05f
             }
-            last = t
+            last = n
         }
     }
 

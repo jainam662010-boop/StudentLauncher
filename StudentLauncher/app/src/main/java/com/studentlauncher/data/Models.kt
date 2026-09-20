@@ -17,3 +17,15 @@ enum class DockStyle { Bottom, Rail, Off }
 enum class ViewMode { Home, All }
 enum class MenuType { None, Focus, Widgets, Style }
 enum class Chip { All, Study }
+enum class InternalDestination { Home, Plan, Settings }
+
+/** Lightweight, local-only study plan item.  Dates are ISO-8601 strings for stable persistence. */
+data class PlanTask(
+    val id: String,
+    val title: String,
+    val due: String = "",
+    val priority: Int = 1,
+    val completed: Boolean = false,
+    val className: String = ""
+)
+data class PlanEvent(val id: String, val title: String, val date: String, val time: String = "", val course: String = "")

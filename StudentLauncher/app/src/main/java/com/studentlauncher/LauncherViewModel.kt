@@ -50,14 +50,25 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var studyMode by mutableStateOf(prefs.getBoolean("studyMode", false)); private set
     var pauseSec by mutableStateOf(prefs.getInt("pauseSec", 5)); private set
     var reminderMin by mutableStateOf(prefs.getInt("reminderMin", 10)); private set
+    var motionIntensity by mutableStateOf(prefs.getFloat("motionIntensity", 1f)); private set
+    var compactDensity by mutableStateOf(prefs.getBoolean("compactDensity", false)); private set
+    var onboardingComplete by mutableStateOf(prefs.getBoolean("onboardingComplete", false)); private set
+    var destination by mutableStateOf(InternalDestination.Home)
 
     val pinned = mutableStateListOf<String>().apply { addAll(csv("pinned")) }
     val dock = mutableStateListOf<String>().apply { addAll(csv("dock")) }
     var flagged by mutableStateOf(csv("flagged").toSet()); private set
     var studyApps by mutableStateOf(csv("study").toSet()); private set
-    val widgets = mutableStateListOf<WidgetItem>().apply {
-        addAll(parseWidgets(prefs.getString("widgets_v2", null)) ?: defaultWidgets())
+    val homeWidgets = mutableStateListOf<WidgetItem>().apply {
+        addAll(parseWidgets(prefs.getString("home_widgets_v2", null))
+            ?: parseWidgets(prefs.getString("widgets_v2", null))
+            ?: defaultWidgets())
     }
+    val boardWidgets = mutableStateListOf<WidgetItem>().apply {
+        addAll(parseWidgets(prefs.getString("board_widgets_v2", null)) ?: emptyList())
+    }
+    /** Which list the widget center is editing: true = home, false = board. */
+    var widgetTargetHome by mutableStateOf(true)
     var pendingWidgetId = -1
 
     // ---- transient UI state ----
@@ -77,6 +88,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var editWidgetId by mutableStateOf<String?>(null)
     var wallpaperEditor by mutableStateOf(false)
     var aboutOpen by mutableStateOf(false)
+    val planTasks = mutableStateListOf<PlanTask>().apply { addAll(parsePlanTasks(prefs.getString("plan_tasks", "") ?: "")) }
+    val planEvents = mutableStateListOf<PlanEvent>().apply { addAll(parsePlanEvents(prefs.getString("plan_events", "") ?: "")) }
 
     init { refresh() }
 
@@ -102,7 +115,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             }
             val px = (ctx.resources.displayMetrics.density * 56f).toInt().coerceAtLeast(96)
             list.forEach { a ->
-                if (icons[a.pkg] == null) repo.loadIcon(a, px)?.let { icons[a.pkg] = it }
+                if (icons[a.pkg] == null) repo.loadIcon(a, px)?.let { ic ->
+                    withContext(Dispatchers.Main) { icons[a.pkg] = ic }
+                }
             }
         }
     }
@@ -146,7 +161,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun onScrubRelease(i: Int) { if (i == 27) menu = MenuType.Style }
+    fun onScrubRelease(i: Int) { if (i == 27) destination = InternalDestination.Settings }
 
     fun goHome() { view = ViewMode.Home; query = ""; menu = MenuType.None; ctxApp = null }
 
@@ -157,10 +172,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         widgetCenter = false
         aboutOpen = false
         wallpaperEditor = false
+        destination = InternalDestination.Home
     }
 
     fun back() {
         when {
+            destination != InternalDestination.Home -> destination = InternalDestination.Home
             wallpaperEditor -> wallpaperEditor = false
             aboutOpen -> aboutOpen = false
             editWidgetId != null -> editWidgetId = null
@@ -218,17 +235,23 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- widgets ----
-    private fun saveWidgets() = putS("widgets_v2", widgets.toList().toJson())
+    private fun saveHomeWidgets() = putS("home_widgets_v2", homeWidgets.toList().toJson())
+    private fun saveBoardWidgets() = putS("board_widgets_v2", boardWidgets.toList().toJson())
+
+    /** The active list based on current target. */
+    private fun activeWidgets() = if (widgetTargetHome) homeWidgets else boardWidgets
+    private fun saveActive() { if (widgetTargetHome) saveHomeWidgets() else saveBoardWidgets() }
 
     fun addWidget(type: String) {
-        widgets.add(newWidget(type))
-        saveWidgets()
-        toast = "${WT.title(type)} added"
+        val list = activeWidgets()
+        list.add(newWidget(type))
+        saveActive()
+        toast = "${WT.title(type)} added to ${if (widgetTargetHome) "Home" else "Board"}"
     }
 
     fun commitAndroidWidget(appId: Int) {
-        widgets.add(WidgetItem(UUID.randomUUID().toString(), WT.ANDROID, cfg = mapOf("appWidgetId" to appId.toString())))
-        saveWidgets()
+        activeWidgets().add(WidgetItem(UUID.randomUUID().toString(), WT.ANDROID, cfg = mapOf("appWidgetId" to appId.toString())))
+        saveActive()
         pendingWidgetId = -1
         widgetCenter = false
     }
@@ -238,32 +261,67 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         pendingWidgetId = -1
     }
 
+    /** Remove a widget from whichever list it's in. */
     fun removeWidget(id: String) {
-        val w = widgets.firstOrNull { it.id == id } ?: return
+        val w = homeWidgets.firstOrNull { it.id == id } ?: boardWidgets.firstOrNull { it.id == id } ?: return
+        val list = if (homeWidgets.contains(w)) homeWidgets else boardWidgets
         if (w.type == WT.ANDROID) w.get("appWidgetId").toIntOrNull()?.let { hostMgr.release(it) }
-        widgets.remove(w)
+        list.remove(w)
         if (editWidgetId == id) editWidgetId = null
-        saveWidgets()
+        if (list === homeWidgets) saveHomeWidgets() else saveBoardWidgets()
     }
 
     fun moveWidget(id: String, delta: Int) {
-        val i = widgets.indexOfFirst { it.id == id }
+        val list = activeWidgets()
+        val i = list.indexOfFirst { it.id == id }
         val j = i + delta
-        if (i < 0 || j !in widgets.indices) return
-        val w = widgets.removeAt(i)
-        widgets.add(j, w)
-        saveWidgets()
+        if (i < 0 || j !in list.indices) return
+        val w = list.removeAt(i)
+        list.add(j, w)
+        saveActive()
     }
 
+    fun reorderWidget(from: Int, to: Int) {
+        val list = activeWidgets()
+        if (from !in list.indices || to !in list.indices || from == to) return
+        val w = list.removeAt(from)
+        list.add(to, w)
+        saveActive()
+    }
+
+    /** Reorder within a specific list (for board drag). */
+    fun reorderBoardWidget(from: Int, to: Int) {
+        if (from !in boardWidgets.indices || to !in boardWidgets.indices || from == to) return
+        val w = boardWidgets.removeAt(from)
+        boardWidgets.add(to, w)
+        saveBoardWidgets()
+    }
+
+    fun setWidgetHeight(id: String, h: Int) {
+        val clamped = h.coerceIn(1, 3)
+        updateWidget(id) { it.copy(height = clamped, half = clamped <= 1) }
+    }
+
+    /** Update a widget in whichever list it belongs to. */
     fun updateWidget(id: String, f: (WidgetItem) -> WidgetItem) {
-        val i = widgets.indexOfFirst { it.id == id }
-        if (i >= 0) {
-            widgets[i] = f(widgets[i])
-            saveWidgets()
+        val inHome = homeWidgets.indexOfFirst { it.id == id }
+        if (inHome >= 0) {
+            homeWidgets[inHome] = f(homeWidgets[inHome])
+            saveHomeWidgets()
+            return
+        }
+        val inBoard = boardWidgets.indexOfFirst { it.id == id }
+        if (inBoard >= 0) {
+            boardWidgets[inBoard] = f(boardWidgets[inBoard])
+            saveBoardWidgets()
         }
     }
 
     fun setCfg(id: String, key: String, value: String) = updateWidget(id) { it.put(key, value) }
+
+    /** Find a widget across both lists. */
+    fun findWidget(id: String): WidgetItem? =
+        homeWidgets.firstOrNull { it.id == id } ?: boardWidgets.firstOrNull { it.id == id }
 
     // ---- wallpaper ----
     fun saveWallpaperAdjust(blur: Float, dim: Float, zoom: Float, panX: Float, panY: Float) {
@@ -288,6 +346,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- settings setters ----
+    private fun putS(k: String, v: String) = prefs.edit().putString(k, v).apply()
+    private fun putB(k: String, v: Boolean) = prefs.edit().putBoolean(k, v).apply()
+
     fun applyTheme(v: ThemeMode) { themeMode = v; putS("theme", v.name) }
     fun applyWallpaper(id: String) { wallpaper = id; putS("wallpaper", id) }
     fun applyIconStyle(v: IconStyle) { iconStyle = v; putS("iconStyle", v.name) }
@@ -298,17 +359,44 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun applyShowNames(v: Boolean) { showNames = v; putB("showNames", v) }
     fun applyStudyMode(v: Boolean) { studyMode = v; putB("studyMode", v) }
     fun applyPauseSec(v: Int) { pauseSec = v; prefs.edit().putInt("pauseSec", v).apply() }
-    fun applyReminderMin(v: Int) {
-        reminderMin = v
-        prefs.edit().putInt("reminderMin", v).apply()
+    fun applyReminderMin(v: Int) { reminderMin = v; prefs.edit().putInt("reminderMin", v).apply() }
+    fun applyMotionIntensity(v: Float) { motionIntensity = v; prefs.edit().putFloat("motionIntensity", v).apply() }
+    fun applyCompactDensity(v: Boolean) { compactDensity = v; putB("compactDensity", v) }
+    /** Respects the system animator scale, which the reduce-motion accessibility toggle also sets to 0. */
+    fun effectiveMotion(): Float = runCatching {
+        val scale = android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        if (scale == 0f) 0f else (motionIntensity * scale).coerceIn(0f, 1f)
+    }.getOrDefault(motionIntensity)
+    fun finishOnboarding() { onboardingComplete = true; putB("onboardingComplete", true) }
+    fun resetOnboarding() { onboardingComplete = false; putB("onboardingComplete", false) }
+
+    fun addPlanTask(title: String, due: String = "", priority: Int = 1, className: String = "") {
+        if (title.isBlank()) return
+        if (due.isNotBlank() && runCatching { java.time.LocalDate.parse(due) }.isFailure) { toast = "Use a valid date: YYYY-MM-DD"; return }
+        planTasks.add(PlanTask(UUID.randomUUID().toString(), title.trim(), due, priority, false, className.trim()))
+        savePlanTasks()
     }
+    fun updatePlanTask(task: PlanTask) { if (task.due.isNotBlank() && runCatching { java.time.LocalDate.parse(task.due) }.isFailure) { toast = "Use a valid date: YYYY-MM-DD"; return }; val i = planTasks.indexOfFirst { it.id == task.id }; if (i >= 0) { planTasks[i] = task; savePlanTasks() } }
+    fun removePlanTask(id: String) { planTasks.removeAll { it.id == id }; savePlanTasks() }
+    fun startFocusFor(task: PlanTask) {
+        val timer = homeWidgets.firstOrNull { it.type == WT.TIMER } ?: boardWidgets.firstOrNull { it.type == WT.TIMER }
+        if (timer != null) setCfg(timer.id, "start", System.currentTimeMillis().toString())
+        else { toast = "Add a Study timer widget to begin focus"; return }
+        toast = "Focus: ${task.title}"; destination = InternalDestination.Home
+    }
+    fun addPlanEvent(title: String, date: String, time: String = "", course: String = "") { if (title.isNotBlank() && runCatching { java.time.LocalDate.parse(date) }.isSuccess) { planEvents.add(PlanEvent(UUID.randomUUID().toString(), title.trim(), date, time, course.trim())); savePlanEvents() } else toast = "Use a valid date: YYYY-MM-DD" }
+    fun removePlanEvent(id: String) { planEvents.removeAll { it.id == id }; savePlanEvents() }
+    private fun savePlanTasks() = putS("plan_tasks", planTasks.joinToString("\\n") { listOf(it.id, it.title.replace("|", " "), it.due, it.priority, it.completed, it.className.replace("|", " ")).joinToString("|") })
+    private fun parsePlanTasks(raw: String) = raw.lineSequence().mapNotNull { line ->
+        val p = line.split("|"); if (p.size < 6) null else PlanTask(p[0], p[1], p[2], p[3].toIntOrNull() ?: 1, p[4].toBoolean(), p[5])
+    }.toList()
+    private fun savePlanEvents() = putS("plan_events", planEvents.joinToString("\\n") { listOf(it.id,it.title.replace("|"," "),it.date,it.time,it.course.replace("|"," ")).joinToString("|") })
+    private fun parsePlanEvents(raw: String) = raw.lineSequence().mapNotNull { line -> val p=line.split("|"); if(p.size<5) null else PlanEvent(p[0],p[1],p[2],p[3],p[4]) }.toList()
 
     // ---- prefs helpers ----
     private inline fun <reified E : Enum<E>> enumPref(key: String, def: E): E =
         runCatching { enumValueOf<E>(prefs.getString(key, def.name) ?: def.name) }.getOrDefault(def)
 
-    private fun putS(k: String, v: String) = prefs.edit().putString(k, v).apply()
-    private fun putB(k: String, v: Boolean) = prefs.edit().putBoolean(k, v).apply()
     private fun csv(k: String): List<String> =
         (prefs.getString(k, "") ?: "").split(",").filter { it.isNotBlank() }
     private fun saveCsv(k: String, l: Collection<String>) =

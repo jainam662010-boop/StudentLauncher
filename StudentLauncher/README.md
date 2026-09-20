@@ -11,6 +11,12 @@ Developed by thats.jainam.
 
 This code was written without a compiler, so expect a few small compile errors on first sync.
 
+## Quiet Motion redesign
+- First-run onboarding is a three-step, skippable flow. It only requests notification permission when the student explicitly chooses focus reminders; the flow can be restarted in Settings.
+- **Plan** is a first-party internal app, reached from Home. Tasks store title, course, ISO due date, priority, and completion locally in launcher preferences. No account or network is involved.
+- Home uses a single widget language (12dp corners, neutral outlines, restrained red signal state). Widget placement uses Compose layout animation and the home canvas uses spring/fade-through motion; motion intensity and visual density are configurable in Settings.
+- Settings is an ordinary internal launcher destination rather than a persistent menu bar. Existing wallpaper, app, widget, and focus controls remain available.
+
 ## What is new in 2.0
 - Wallpaper editor: blur, dim, and zoom + drag for photos (Style > Adjust wallpaper).
 - Widget system: add, reorder, edit and remove. Long-press any widget to edit it.

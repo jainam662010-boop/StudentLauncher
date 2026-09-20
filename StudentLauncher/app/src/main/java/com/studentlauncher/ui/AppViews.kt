@@ -133,7 +133,7 @@ fun AppEntry(
     val haptic = LocalHapticFeedback.current
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val s by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.5f, stiffness = 420f), label = "press")
+    val s by animateFloatAsState(if (pressed) 0.92f else 1f, Motion.Micro, label = "press")
     var rect by remember { mutableStateOf(Rect.Zero) }
 
     val gestures = Modifier.combinedClickable(
@@ -214,8 +214,8 @@ fun HomeApps(
                     androidx.compose.runtime.key(pkg) {
                         AnimatedVisibility(
                             visible = vm.isVisible(a),
-                            enter = fadeIn(spring(stiffness = 300f)) + expandVertically(spring(dampingRatio = 0.8f, stiffness = 320f)),
-                            exit = fadeOut() + shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 400f))
+                            enter = fadeIn(Motion.Macro) + expandVertically(Motion.Size),
+                            exit = fadeOut() + shrinkVertically(Motion.Size)
                         ) { AppEntry(a, vm, EntryMode.List, onLaunch, onMenu) }
                     }
                 }
@@ -275,11 +275,11 @@ fun AlphaScrubber(vm: LauncherViewModel, letterH: Dp, modifier: Modifier = Modif
             val d = if (active < 0) 99 else abs(idx - active)
             val off = animateFloatAsState(
                 if (active < 0) 0f else max(0f, 26f - d * 7f),
-                spring(dampingRatio = 0.6f, stiffness = 500f), label = "wave"
+                Motion.Micro, label = "wave"
             )
             val sc = animateFloatAsState(
                 if (active < 0) 1f else 1f + max(0f, 0.55f - d * 0.16f),
-                spring(dampingRatio = 0.6f, stiffness = 500f), label = "waveScale"
+                Motion.Micro, label = "waveScale"
             )
             val dim = idx in 1..26 && ('A' + (idx - 1)) !in available
             Box(
@@ -320,14 +320,19 @@ fun AllAppsPanel(
     Column(
         modifier.fillMaxWidth().imePadding().padding(start = startPad, end = endPad, bottom = 8.dp)
     ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton("Plan", { vm.destination = com.studentlauncher.data.InternalDestination.Plan }, Modifier.weight(1f))
+            PillButton("Settings", { vm.destination = com.studentlauncher.data.InternalDestination.Settings }, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
         Segmented(listOf(Chip.All to "All", Chip.Study to "Study"), vm.chip, { vm.chip = it }, Modifier.width(170.dp))
         Spacer(Modifier.height(12.dp))
         AnimatedContent(
             targetState = key,
             transitionSpec = {
                 val d = vm.letterDir
-                (slideInVertically(spring(0.8f, 380f)) { it * d / 4 } + fadeIn(spring(stiffness = 500f))) togetherWith
-                    (slideOutVertically(spring(0.8f, 380f)) { -it * d / 4 } + fadeOut(spring(stiffness = 700f)))
+                (slideInVertically(Motion.Offset) { it * d / 4 } + fadeIn(Motion.Macro)) togetherWith
+                    (slideOutVertically(Motion.Offset) { -it * d / 4 } + fadeOut(Motion.Macro))
             },
             modifier = Modifier.weight(1f).fillMaxWidth(),
             label = "panel"

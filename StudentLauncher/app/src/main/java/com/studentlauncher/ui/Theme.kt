@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -53,11 +54,38 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 val NothingRed = Color(0xFFD71921)
+
+// ponytail: centralised motion/spacing/type so every call site stays consistent
+object Motion {
+    /** Sheets, panels, overlays — calm, not bouncy. */
+    val Macro = spring<Float>(dampingRatio = 0.85f, stiffness = 320f)
+    /** Press, scrub, toggle — snappy micro-feedback. */
+    val Micro = spring<Float>(dampingRatio = 0.7f, stiffness = 500f)
+    /** Size animations (animateContentSize). */
+    val Size = spring<androidx.compose.ui.unit.IntSize>(dampingRatio = 0.85f, stiffness = 320f)
+    /** Offset animations (slideIn/slideOut). */
+    val Offset = spring<androidx.compose.ui.unit.IntOffset>(dampingRatio = 0.85f, stiffness = 320f)
+}
+
+object Dim {
+    val PaddingXs = 6.dp; val PaddingSm = 8.dp; val PaddingMd = 14.dp
+    val PaddingLg = 20.dp; val PaddingXl = 24.dp
+    val CardRadius = 12.dp; val SheetRadius = 24.dp; val PillRadius = 24.dp
+    val WidgetGap = 10.dp
+}
+
+object Type {
+    val Kicker = 11f; val Caption = 12f; val Body = 14f
+    val Subhead = 15f; val Title = 20f; val Large = 25f
+}
 
 @Immutable
 class LauncherColors(
@@ -78,6 +106,8 @@ fun launcherColors(dark: Boolean) = if (dark) {
 }
 
 val LocalColors = staticCompositionLocalOf { launcherColors(false) }
+/** 0 means Android reduced motion is enabled; 1 is the normal calm motion profile. */
+val LocalMotionScale = staticCompositionLocalOf { 1f }
 
 /** Text colour choice for a widget: theme, always light, always dark, or Nothing red. */
 fun toneColor(tone: String, c: LauncherColors): Color = when (tone) {
@@ -115,12 +145,12 @@ fun Txt(
 
 /** Click without a ripple; the glass UI uses springs instead. */
 fun Modifier.tap(onClick: () -> Unit): Modifier = composed {
-    clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+    clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = onClick)
 }
 
 /** 0 -> 1 spring used for enter animations of overlays. */
 @Composable
-fun enterProgress(spec: AnimationSpec<Float> = spring(dampingRatio = 0.8f, stiffness = 330f)): State<Float> {
+fun enterProgress(spec: AnimationSpec<Float> = Motion.Macro): State<Float> {
     val a = remember { Animatable(0f) }
     LaunchedEffect(Unit) { a.animateTo(1f, spec) }
     return a.asState()
@@ -134,8 +164,9 @@ fun <T> Segmented(
     modifier: Modifier = Modifier
 ) {
     val c = LocalColors.current
+    val haptic = LocalHapticFeedback.current
     val idx = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
-    val pos by animateFloatAsState(idx.toFloat(), spring(dampingRatio = 0.75f, stiffness = 450f), label = "seg")
+    val pos by animateFloatAsState(idx.toFloat(), Motion.Micro, label = "seg")
     BoxWithConstraints(
         modifier.fillMaxWidth().height(32.dp).clip(RoundedCornerShape(10.dp)).background(c.track).padding(2.dp)
     ) {
@@ -143,7 +174,10 @@ fun <T> Segmented(
         Box(Modifier.offset(x = segW * pos).width(segW).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(c.knob))
         Row(Modifier.fillMaxSize()) {
             options.forEach { (v, label) ->
-                Box(Modifier.weight(1f).fillMaxHeight().tap { onSelect(v) }, contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).fillMaxHeight().tap {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSelect(v)
+                }, contentAlignment = Alignment.Center) {
                     Txt(label, 12f, if (v == selected) Color(0xFF1C1C1E) else c.fg)
                 }
             }
@@ -154,9 +188,13 @@ fun <T> Segmented(
 @Composable
 fun GlassSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
     val c = LocalColors.current
-    val x by animateDpAsState(if (on) 20.dp else 2.dp, spring(dampingRatio = 0.65f, stiffness = 500f), label = "sw")
+    val haptic = LocalHapticFeedback.current
+    val x by animateDpAsState(if (on) 20.dp else 2.dp, spring(dampingRatio = 0.7f, stiffness = 500f), label = "sw")
     val bg by animateColorAsState(if (on) c.fg else c.track, label = "swbg")
-    Box(Modifier.width(44.dp).height(26.dp).clip(CircleShape).background(bg).tap { onChange(!on) }) {
+    Box(Modifier.width(44.dp).height(26.dp).clip(CircleShape).background(bg).tap {
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        onChange(!on)
+    }) {
         Box(Modifier.offset(x = x, y = 2.dp).size(22.dp).clip(CircleShape).background(if (on) c.knobOn else c.knob))
     }
 }
@@ -235,10 +273,14 @@ fun PillButton(
     danger: Boolean = false
 ) {
     val c = LocalColors.current
+    val haptic = LocalHapticFeedback.current
     val bg = if (filled) c.fg else c.track
     val fg = if (filled) c.knobOn else if (danger) c.accent else c.fg
     Box(
-        modifier.clip(CircleShape).background(bg).tap(onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier.height(48.dp).clip(CircleShape).background(bg).tap {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        }.padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) { Txt(label, 13f, fg) }
 }

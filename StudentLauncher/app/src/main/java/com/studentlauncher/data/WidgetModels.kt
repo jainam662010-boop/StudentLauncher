@@ -45,27 +45,38 @@ data class WidgetItem(
     val bg: WidgetBg = WidgetBg.Glass,
     val half: Boolean = false,
     val size: Int = 1,
+    val height: Int = 2,
     val tone: String = "auto",
     val cfg: Map<String, String> = emptyMap()
 ) {
+    /** Backward compat: small widgets pair as half-width. */
+    val effectiveHalf: Boolean get() = half || height <= 1
     fun get(key: String, def: String = ""): String = cfg[key] ?: def
     fun put(key: String, value: String): WidgetItem = copy(cfg = cfg + (key to value))
 }
 
-fun newWidget(type: String): WidgetItem = WidgetItem(
-    id = UUID.randomUUID().toString(),
-    type = type,
-    half = type in setOf(WT.DATE, WT.BATTERY, WT.NEXT, WT.COUNTDOWN, WT.TIMER),
-    cfg = when (type) {
-        WT.CLOCK -> mapOf("style" to "Dot", "fmt" to "sys", "date" to "1", "quote" to "1")
-        WT.NEXT -> mapOf("title" to "Physics", "time" to "10:30")
-        WT.COUNTDOWN -> mapOf("title" to "Exam", "date" to "")
-        WT.TIMER -> mapOf("min" to "25", "start" to "0")
-        WT.GLYPH -> mapOf("mode" to "Pulse")
-        WT.WEEK -> mapOf("mon" to "1")
-        else -> emptyMap()
+fun newWidget(type: String): WidgetItem {
+    val h = when (type) {
+        WT.DATE, WT.BATTERY, WT.NEXT, WT.COUNTDOWN, WT.TIMER -> 1
+        WT.TASKS, WT.QUICK, WT.SPHERE, WT.GLYPH -> 2
+        else -> 2
     }
-)
+    return WidgetItem(
+        id = UUID.randomUUID().toString(),
+        type = type,
+        height = h,
+        half = h <= 1,
+        cfg = when (type) {
+            WT.CLOCK -> mapOf("style" to "Dot", "fmt" to "sys", "date" to "1", "quote" to "1")
+            WT.NEXT -> mapOf("title" to "Physics", "time" to "10:30")
+            WT.COUNTDOWN -> mapOf("title" to "Exam", "date" to "")
+            WT.TIMER -> mapOf("min" to "25", "start" to "0")
+            WT.GLYPH -> mapOf("mode" to "Pulse")
+            WT.WEEK -> mapOf("mon" to "1")
+            else -> emptyMap()
+        }
+    )
+}
 
 fun defaultWidgets(): List<WidgetItem> = listOf(newWidget(WT.CLOCK), newWidget(WT.NEXT), newWidget(WT.TIMER))
 
@@ -77,7 +88,8 @@ fun List<WidgetItem>.toJson(): String {
         arr.put(
             JSONObject()
                 .put("id", w.id).put("type", w.type).put("bg", w.bg.name)
-                .put("half", w.half).put("size", w.size).put("tone", w.tone).put("cfg", cfg)
+                .put("half", w.half).put("size", w.size).put("height", w.height)
+                .put("tone", w.tone).put("cfg", cfg)
         )
     }
     return arr.toString()
@@ -98,6 +110,7 @@ fun parseWidgets(s: String?): List<WidgetItem>? {
                 bg = runCatching { WidgetBg.valueOf(o.optString("bg", "Glass")) }.getOrDefault(WidgetBg.Glass),
                 half = o.optBoolean("half", false),
                 size = o.optInt("size", 1),
+                height = o.optInt("height", if (o.optBoolean("half", false)) 1 else 2),
                 tone = o.optString("tone", "auto"),
                 cfg = cfg
             )

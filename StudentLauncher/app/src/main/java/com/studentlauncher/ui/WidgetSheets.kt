@@ -1,6 +1,7 @@
 package com.studentlauncher.ui
 
 import android.appwidget.AppWidgetProviderInfo
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,11 +51,15 @@ fun WidgetCenter(vm: LauncherViewModel, onAddAndroid: (AppWidgetProviderInfo) ->
     val pm = LocalContext.current.packageManager
     val tab = vm.widgetTab
     var showAndroid by remember { mutableStateOf(false) }
+    val targetList = if (vm.widgetTargetHome) vm.homeWidgets else vm.boardWidgets
+    val targetLabel = if (vm.widgetTargetHome) "Home" else "Board"
 
     BottomSheet({ vm.widgetCenter = false }, 0.88f) {
         Txt("Widgets", 18f, c.fg, FontWeight.Medium)
-        Spacer(Modifier.height(14.dp))
-        Segmented(listOf(0 to "Add", 1 to "Yours (${vm.widgets.size})"), tab, { vm.widgetTab = it })
+        Spacer(Modifier.height(10.dp))
+        Segmented(listOf(true to "Home", false to "Board"), vm.widgetTargetHome, { vm.widgetTargetHome = it })
+        Spacer(Modifier.height(10.dp))
+        Segmented(listOf(0 to "Add", 1 to "Yours (${targetList.size})"), tab, { vm.widgetTab = it })
         Spacer(Modifier.height(10.dp))
 
         if (tab == 0) {
@@ -84,8 +89,8 @@ fun WidgetCenter(vm: LauncherViewModel, onAddAndroid: (AppWidgetProviderInfo) ->
                 }
             }
         } else {
-            if (vm.widgets.isEmpty()) Txt("Nothing here yet. Use the Add tab.", 13f, c.fg2, modifier = Modifier.padding(vertical = 12.dp))
-            vm.widgets.toList().forEach { w ->
+            if (targetList.isEmpty()) Txt("Nothing here yet in $targetLabel. Use the Add tab.", 13f, c.fg2, modifier = Modifier.padding(vertical = 12.dp))
+            targetList.toList().forEach { w ->
                 val name = if (w.type == WT.ANDROID) {
                     vm.hostMgr.info(w.get("appWidgetId").toIntOrNull() ?: -1)?.loadLabel(pm) ?: "Android widget"
                 } else WT.title(w.type)
@@ -106,7 +111,7 @@ fun WidgetCenter(vm: LauncherViewModel, onAddAndroid: (AppWidgetProviderInfo) ->
 /** Per-widget settings: background, width, colour and type specific options. */
 @Composable
 fun WidgetSettings(vm: LauncherViewModel, id: String) {
-    val w = vm.widgets.firstOrNull { it.id == id } ?: return
+    val w = vm.findWidget(id) ?: return
     val c = LocalColors.current
 
     BottomSheet({ vm.editWidgetId = null }, 0.88f) {
@@ -219,6 +224,11 @@ fun AboutSheet(vm: LauncherViewModel) {
             13f, c.fg2, maxLines = 4
         )
         Spacer(Modifier.height(18.dp))
-        PillButton("Close", { vm.aboutOpen = false }, filled = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PillButton("Privacy Policy", {
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://jainam662010-boop.github.io/StudentLauncher/privacy.html")))
+            })
+            PillButton("Close", { vm.aboutOpen = false }, filled = true)
+        }
     }
 }
