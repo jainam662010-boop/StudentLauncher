@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -42,6 +44,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +72,7 @@ import com.studentlauncher.data.ThemeMode
 import com.studentlauncher.data.ViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -138,6 +142,10 @@ fun HomeLayer(
     var lastToast by remember { mutableStateOf("") }
     val anchors = remember { mutableStateMapOf<MenuType, Float>() }
 
+    // Phase 1: 0 = home, 1 = widget board. Swipe anywhere; dock stays put until Phase 2.
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+
     // 0 = home, 1 = all-apps panel. Read only in graphicsLayer blocks so animating it never
     // recomposes the screen (that is what keeps the transition smooth).
     val prog = remember { Animatable(0f) }
@@ -152,7 +160,10 @@ fun HomeLayer(
     val topLimitPx = with(dens) { (topPad + MENU_H + 8.dp).toPx() }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { launching = null }
-    BackHandler { vm.back() }
+    BackHandler {
+        if (pagerState.currentPage == 1) scope.launch { pagerState.animateScrollToPage(0) }
+        else vm.back()
+    }
 
     val launchApp: (AppInfo, Rect) -> Unit = { app, rect ->
         vm.ctxApp = null
@@ -189,86 +200,15 @@ fun HomeLayer(
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.statusBarsPadding().height(MENU_H + 8.dp))
 
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                val areaH = maxHeight
-                val letterH = (areaH * 0.6f / 28f).coerceIn(10.dp, 17.dp)
-                val side = vm.alphaSide
-                val rail = vm.dockStyle == DockStyle.Rail
-                val railLeft = rail && side != AlphaSide.Left
-                val railRight = rail && side == AlphaSide.Left
-                val startPad = 22.dp + (if (side == AlphaSide.Left) 20.dp else 0.dp) + (if (railLeft) 66.dp else 0.dp)
-                val endPad = 22.dp + (if (side == AlphaSide.Right) 20.dp else 0.dp) + (if (railRight) 66.dp else 0.dp)
-                val wStart = 16.dp + (if (side == AlphaSide.Left) 26.dp else 0.dp) + (if (railLeft) 66.dp else 0.dp)
-                val wEnd = 16.dp + (if (side == AlphaSide.Right) 26.dp else 0.dp) + (if (railRight) 66.dp else 0.dp)
-
-                if (showHome) {
-                    Widgets(
-                        vm, wStart, wEnd, compact, areaH * 0.62f,
-                        Modifier
-                            .align(Alignment.TopCenter)
-                            .graphicsLayer {
-                                val p = prog.value
-                                alpha = 1f - 0.9f * p
-                                scaleX = 1f - 0.06f * p
-                                scaleY = 1f - 0.06f * p
-                                transformOrigin = TransformOrigin(0.5f, 0f)
-                                depthBlur(p)
-                            }
-                    )
-                    HomeApps(
-                        vm, launchApp, openMenu,
-                        Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                val p = prog.value
-                                alpha = 1f - p
-                                translationX = -48f * p * density
-                                scaleX = 1f - 0.05f * p
-                                scaleY = 1f - 0.05f * p
-                                transformOrigin = TransformOrigin(0f, 1f)
-                                depthBlur(p)
-                            }
-                            .verticalScroll(rememberScrollState())
-                            .padding(start = startPad, end = endPad)
-                    )
-                }
-
-                if (showPanel) {
-                    AllAppsPanel(
-                        vm,
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxHeight(if (compact) 0.92f else 0.74f)
-                            .graphicsLayer {
-                                val p = prog.value
-                                alpha = p
-                                val s = 0.94f + 0.06f * p
-                                scaleX = s
-                                scaleY = s
-                                translationX = (1f - p) * 60f * density
-                                transformOrigin = TransformOrigin(1f, 1f)
-                            },
-                        startPad, endPad, launchApp, openMenu
-                    )
-                }
-
-                if (rail) {
-                    DockRail(
-                        vm, launchApp, openMenu,
-                        Modifier
-                            .align(if (railLeft) Alignment.BottomStart else Alignment.BottomEnd)
-                            .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-                    )
-                }
-
-                if (side != AlphaSide.Off) {
-                    AlphaScrubber(
-                        vm, letterH,
-                        Modifier
-                            .align(if (side == AlphaSide.Right) Alignment.BottomEnd else Alignment.BottomStart)
-                            .padding(bottom = 6.dp)
-                    )
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                beyondViewportPageCount = 1
+            ) { page ->
+                if (page == 0) {
+                    HomePageContent(vm, launchApp, openMenu, prog, showHome, showPanel, compact)
+                } else {
+                    WidgetBoard(vm, Modifier.fillMaxSize())
                 }
             }
 
@@ -319,5 +259,102 @@ fun HomeLayer(
         ) { ToastPill(lastToast) }
 
         LaunchOverlay(launching, c.dark)
+    }
+}
+
+// Phase 1: page 0 of the Home <-> Board pager. Extracted verbatim so the
+// Home <-> All panel transition (prog) behaves exactly as before.
+@Composable
+private fun HomePageContent(
+    vm: LauncherViewModel,
+    launchApp: (AppInfo, Rect) -> Unit,
+    openMenu: (AppInfo, Rect) -> Unit,
+    prog: Animatable<Float, *>,
+    showHome: Boolean,
+    showPanel: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val areaH = maxHeight
+        val letterH = (areaH * 0.6f / 28f).coerceIn(10.dp, 17.dp)
+        val side = vm.alphaSide
+        val rail = vm.dockStyle == DockStyle.Rail
+        val railLeft = rail && side != AlphaSide.Left
+        val railRight = rail && side == AlphaSide.Left
+        val startPad = 22.dp + (if (side == AlphaSide.Left) 20.dp else 0.dp) + (if (railLeft) 66.dp else 0.dp)
+        val endPad = 22.dp + (if (side == AlphaSide.Right) 20.dp else 0.dp) + (if (railRight) 66.dp else 0.dp)
+        val wStart = 16.dp + (if (side == AlphaSide.Left) 26.dp else 0.dp) + (if (railLeft) 66.dp else 0.dp)
+        val wEnd = 16.dp + (if (side == AlphaSide.Right) 26.dp else 0.dp) + (if (railRight) 66.dp else 0.dp)
+
+        if (showHome) {
+            Widgets(
+                vm, wStart, wEnd, compact, areaH * 0.62f,
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .graphicsLayer {
+                        val p = prog.value
+                        alpha = 1f - 0.9f * p
+                        scaleX = 1f - 0.06f * p
+                        scaleY = 1f - 0.06f * p
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                        depthBlur(p)
+                    }
+            )
+            HomeApps(
+                vm, launchApp, openMenu,
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        val p = prog.value
+                        alpha = 1f - p
+                        translationX = -48f * p * density
+                        scaleX = 1f - 0.05f * p
+                        scaleY = 1f - 0.05f * p
+                        transformOrigin = TransformOrigin(0f, 1f)
+                        depthBlur(p)
+                    }
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = startPad, end = endPad)
+            )
+        }
+
+        if (showPanel) {
+            AllAppsPanel(
+                vm,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxHeight(if (compact) 0.92f else 0.74f)
+                    .graphicsLayer {
+                        val p = prog.value
+                        alpha = p
+                        val s = 0.94f + 0.06f * p
+                        scaleX = s
+                        scaleY = s
+                        translationX = (1f - p) * 60f * density
+                        transformOrigin = TransformOrigin(1f, 1f)
+                    },
+                startPad, endPad, launchApp, openMenu
+            )
+        }
+
+        if (rail) {
+            DockRail(
+                vm, launchApp, openMenu,
+                Modifier
+                    .align(if (railLeft) Alignment.BottomStart else Alignment.BottomEnd)
+                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+            )
+        }
+
+        if (side != AlphaSide.Off) {
+            AlphaScrubber(
+                vm, letterH,
+                Modifier
+                    .align(if (side == AlphaSide.Right) Alignment.BottomEnd else Alignment.BottomStart)
+                    .padding(bottom = 6.dp)
+            )
+        }
     }
 }
