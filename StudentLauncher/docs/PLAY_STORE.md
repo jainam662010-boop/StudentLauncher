@@ -64,7 +64,7 @@ Developed by thats.jainam.
 - Say clearly in the listing that this is a home screen replacement.
 - Do not describe it as parental control or as an app blocker. It hides apps inside the launcher and sends reminders, it does not block other launchers or apps.
 - Reminders are inexact alarms and can arrive a little late when the phone is in battery saver.
-- Keep the privacy policy (docs/PRIVACY_POLICY.md) on a public URL and enter that URL in Play Console.
+- Privacy policy URL (enter in Play Console): https://jainam662010-boop.github.io/StudentLauncher/privacy.html
 
 ## Store graphics included
 - `store/icon-512.png` (512 x 512 app icon)
