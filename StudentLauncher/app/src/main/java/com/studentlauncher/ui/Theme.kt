@@ -1,0 +1,244 @@
+package com.studentlauncher.ui
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+
+val NothingRed = Color(0xFFD71921)
+
+@Immutable
+class LauncherColors(
+    val dark: Boolean,
+    val fg: Color,
+    val fg2: Color,
+    val tile: Color,
+    val track: Color,
+    val knob: Color,
+    val knobOn: Color,
+    val accent: Color
+)
+
+fun launcherColors(dark: Boolean) = if (dark) {
+    LauncherColors(true, Color(0xFFF5F5F7), Color(0x99F5F5F7), Color(0x1AFFFFFF), Color(0x2EFFFFFF), Color.White, Color(0xFF111111), NothingRed)
+} else {
+    LauncherColors(false, Color(0xFF1C1C1E), Color(0x8C1C1C1E), Color(0x66FFFFFF), Color(0x291C1C1E), Color.White, Color.White, NothingRed)
+}
+
+val LocalColors = staticCompositionLocalOf { launcherColors(false) }
+
+/** Text colour choice for a widget: theme, always light, always dark, or Nothing red. */
+fun toneColor(tone: String, c: LauncherColors): Color = when (tone) {
+    "light" -> Color.White
+    "dark" -> Color(0xFF1C1C1E)
+    "red" -> c.accent
+    else -> c.fg
+}
+
+@Composable
+fun Txt(
+    text: String,
+    size: Float = 14f,
+    color: Color = LocalColors.current.fg,
+    weight: FontWeight = FontWeight.Normal,
+    modifier: Modifier = Modifier,
+    maxLines: Int = 1,
+    align: TextAlign = TextAlign.Unspecified,
+    strike: Boolean = false
+) {
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = color,
+            fontSize = size.sp,
+            fontWeight = weight,
+            textAlign = align,
+            textDecoration = if (strike) TextDecoration.LineThrough else TextDecoration.None
+        ),
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+/** Click without a ripple; the glass UI uses springs instead. */
+fun Modifier.tap(onClick: () -> Unit): Modifier = composed {
+    clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+}
+
+/** 0 -> 1 spring used for enter animations of overlays. */
+@Composable
+fun enterProgress(spec: AnimationSpec<Float> = spring(dampingRatio = 0.8f, stiffness = 330f)): State<Float> {
+    val a = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { a.animateTo(1f, spec) }
+    return a.asState()
+}
+
+@Composable
+fun <T> Segmented(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val c = LocalColors.current
+    val idx = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+    val pos by animateFloatAsState(idx.toFloat(), spring(dampingRatio = 0.75f, stiffness = 450f), label = "seg")
+    BoxWithConstraints(
+        modifier.fillMaxWidth().height(32.dp).clip(RoundedCornerShape(10.dp)).background(c.track).padding(2.dp)
+    ) {
+        val segW = maxWidth / options.size
+        Box(Modifier.offset(x = segW * pos).width(segW).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(c.knob))
+        Row(Modifier.fillMaxSize()) {
+            options.forEach { (v, label) ->
+                Box(Modifier.weight(1f).fillMaxHeight().tap { onSelect(v) }, contentAlignment = Alignment.Center) {
+                    Txt(label, 12f, if (v == selected) Color(0xFF1C1C1E) else c.fg)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GlassSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
+    val c = LocalColors.current
+    val x by animateDpAsState(if (on) 20.dp else 2.dp, spring(dampingRatio = 0.65f, stiffness = 500f), label = "sw")
+    val bg by animateColorAsState(if (on) c.fg else c.track, label = "swbg")
+    Box(Modifier.width(44.dp).height(26.dp).clip(CircleShape).background(bg).tap { onChange(!on) }) {
+        Box(Modifier.offset(x = x, y = 2.dp).size(22.dp).clip(CircleShape).background(if (on) c.knobOn else c.knob))
+    }
+}
+
+@Composable
+fun GlassSlider(
+    value: Float,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    range: ClosedFloatingPointRange<Float> = 0f..1f
+) {
+    val c = LocalColors.current
+    var w by remember { mutableIntStateOf(1) }
+    val cb by rememberUpdatedState(onChange)
+    val frac = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
+    Box(
+        modifier.fillMaxWidth().height(32.dp).onSizeChanged { w = it.width }.pointerInput(range) {
+            awaitEachGesture {
+                val d = awaitFirstDown(requireUnconsumed = false)
+                d.consume()
+                fun set(x: Float) {
+                    cb(range.start + (range.endInclusive - range.start) * (x / w).coerceIn(0f, 1f))
+                }
+                set(d.position.x)
+                do {
+                    val e = awaitPointerEvent()
+                    val ch = e.changes.first()
+                    set(ch.position.x)
+                    ch.consume()
+                } while (e.changes.any { it.pressed })
+            }
+        },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(c.track))
+        Box(Modifier.fillMaxWidth(frac).height(6.dp).clip(CircleShape).background(c.fg))
+        Box(
+            Modifier
+                .offset { IntOffset(((w - 26.dp.roundToPx()) * frac).roundToInt(), 0) }
+                .size(26.dp).clip(CircleShape).background(Color.White)
+                .border(0.5.dp, c.fg2.copy(alpha = 0.3f), CircleShape)
+        )
+    }
+}
+
+@Composable
+fun GlassField(
+    value: String,
+    hint: String,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    numeric: Boolean = false
+) {
+    val c = LocalColors.current
+    Box(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.track)
+            .padding(horizontal = 16.dp, vertical = 13.dp)
+    ) {
+        if (value.isEmpty()) Txt(hint, 15f, c.fg2)
+        BasicTextField(
+            value, onChange, singleLine = true,
+            textStyle = TextStyle(color = c.fg, fontSize = 15.sp),
+            cursorBrush = SolidColor(c.fg),
+            keyboardOptions = KeyboardOptions(keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+fun PillButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    filled: Boolean = false,
+    danger: Boolean = false
+) {
+    val c = LocalColors.current
+    val bg = if (filled) c.fg else c.track
+    val fg = if (filled) c.knobOn else if (danger) c.accent else c.fg
+    Box(
+        modifier.clip(CircleShape).background(bg).tap(onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) { Txt(label, 13f, fg) }
+}

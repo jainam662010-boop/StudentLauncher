@@ -1,0 +1,36 @@
+# Student Launcher 2.0
+
+A calm, distraction-free Android launcher for students. Kotlin + Jetpack Compose, no third-party libraries.
+Developed by thats.jainam.
+
+## Build
+1. Open this folder in Android Studio (latest stable) and let Gradle sync. If Studio offers newer AGP, Kotlin or Compose versions, accept them.
+   Pinned versions: Gradle 8.11.1, AGP 8.9.1, Kotlin 2.1.20, Compose BOM 2025.04.01, compileSdk/targetSdk 36, minSdk 26.
+2. Run on a device or emulator, press Home and choose Student Launcher as the default home app.
+3. Play Store: see docs/PLAY_STORE.md (signing, AAB, listing text, data safety, privacy policy, store graphics in store/).
+
+This code was written without a compiler, so expect a few small compile errors on first sync.
+
+## What is new in 2.0
+- Wallpaper editor: blur, dim, and zoom + drag for photos (Style > Adjust wallpaper).
+- Widget system: add, reorder, edit and remove. Long-press any widget to edit it.
+  Clock (dot, digital, words, analog), date, week, battery, next up, exam countdown, study timer,
+  tasks, quick settings, 3D sphere, glyph matrix, plus regular Android widgets.
+  Each widget can use a Glass, Solid or None (no translucent cover) background, full or half width, and its own text colour.
+- Glyph matrix: on-screen 25 x 25 dot display (Pulse, Spiral, Wave, Time). It does not drive the physical
+  Glyph Matrix on Nothing Phone (3), which needs Nothing's own SDK.
+- Side rail dock (vertical glass pill) as an alternative to the bottom dock.
+- Focus reminders every 5, 10 or 15 minutes while you are in a distracting app you opened from the launcher.
+  Uses an inexact alarm and a notification. No accessibility, usage-access or overlay permission.
+- Smoother motion: home/panel transition, blur depth and scrubber wave run in the draw phase, so they do not recompose.
+- Play Store readiness: target API 36, R8 + resource shrinking, signing config, docs, icon and feature graphic.
+
+## Map
+- ui/Glass.kt: liquid glass modifier
+- ui/Home.kt: layers, transitions, overlays
+- ui/Widgets.kt, ui/WidgetSheets.kt, ui/HostedWidgets.kt: widgets, add/edit sheets, Android widget hosting
+- ui/WallpaperEditor.kt, ui/Wallpapers.kt: wallpaper generation and editing
+- ui/AppViews.kt: app rows, scrubber, panel, docks
+- ui/Menus.kt, ui/Overlays.kt: menu bar, dropdowns, sheets
+- FocusReminders.kt: reminder alarms and notification
+- LauncherViewModel.kt: state and persistence

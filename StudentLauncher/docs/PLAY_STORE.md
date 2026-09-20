@@ -1,0 +1,72 @@
+# Google Play checklist for Student Launcher
+
+Developed by thats.jainam.
+
+## Requirements this project already meets
+- targetSdk 36 / compileSdk 36. Google Play requires new apps and updates to target Android 16 (API 36) from August 31, 2026.
+- Release builds use R8 shrinking and resource shrinking, and build an Android App Bundle (AAB).
+- No AccessibilityService, usage-access, overlay (SYSTEM_ALERT_WINDOW), exact-alarm or QUERY_ALL_PACKAGES permission.
+- The only permission is POST_NOTIFICATIONS, requested when the user turns on focus reminders.
+- allowBackup is off, so no app data leaves the device.
+- Predictive back is enabled and the UI is edge-to-edge (both are required behaviour on API 36).
+
+## Build the release bundle
+1. Create an upload key (once):
+   `keytool -genkeypair -v -keystore upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000`
+2. Copy `keystore.properties.example` to `keystore.properties` and fill it in. Never commit it.
+3. Run `./gradlew bundleRelease`.
+4. Upload `app/build/outputs/bundle/release/app-release.aab` in Play Console and enrol in Play App Signing.
+5. Before promoting to production, run `./gradlew lintRelease` and test on Android 8, 13 and 16 devices.
+   New personal developer accounts may need a closed test with a minimum number of testers first. Check the current rule in Play Console.
+
+## Store listing
+- App name: Student Launcher
+- Category: Personalization
+- Short description (80 characters max):
+  A calm, distraction-free launcher for students with widgets and focus tools.
+- Full description:
+
+  Student Launcher is a minimal home screen built for studying.
+
+  Home
+  - Your favourite apps in a Niagara-style list or grid, with an A to Z scrubber for everything else.
+  - Liquid glass design, smooth spring animations and Nothing-inspired dot-matrix details.
+  - Light and dark themes, your own wallpaper with blur, dim and zoom controls.
+  - Monochrome themed icons, or your original icons, in the shape you like.
+
+  Widgets you can add, move, resize and remove
+  - Clock (dot, digital, words or analog), date, week, battery
+  - Next up, exam countdown, study timer, tasks
+  - Quick settings shortcuts, 3D dot sphere and a 25 by 25 glyph matrix display
+  - Regular Android widgets too
+
+  Focus tools
+  - Study mode hides the apps you mark as distracting.
+  - A short pause before a distracting app opens.
+  - Optional reminders every 5, 10 or 15 minutes while you are in a distracting app.
+    Reminders are plain notifications. The app never watches what you do and needs no special access.
+
+  Private by design: no accounts, no ads, no tracking. Everything stays on your phone.
+
+  Developed by thats.jainam.
+
+## Data safety form
+- Does your app collect or share any of the required user data types? No.
+- Is all of the user data collected by your app encrypted in transit? Not applicable, no data leaves the device.
+- Do you provide a way for users to request that their data is deleted? Not applicable, no data is collected.
+- Permissions to explain if asked: POST_NOTIFICATIONS, only for the optional focus reminders.
+
+## Content rating and audience
+- Answer the IARC questionnaire honestly: no violence, no user-generated content, no purchases, no ads.
+- Target audience: choose 13 and over unless you are ready to meet the Families policy for children under 13.
+
+## Policy notes
+- Say clearly in the listing that this is a home screen replacement.
+- Do not describe it as parental control or as an app blocker. It hides apps inside the launcher and sends reminders, it does not block other launchers or apps.
+- Reminders are inexact alarms and can arrive a little late when the phone is in battery saver.
+- Keep the privacy policy (docs/PRIVACY_POLICY.md) on a public URL and enter that URL in Play Console.
+
+## Store graphics included
+- `store/icon-512.png` (512 x 512 app icon)
+- `store/feature-graphic-1024x500.png` (feature graphic)
+- Screenshots: take at least 4 from a real device or emulator, portrait, showing home, the A to Z panel, widgets and the wallpaper editor.
