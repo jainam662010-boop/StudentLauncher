@@ -51,10 +51,11 @@ Developed by thats.jainam.
   Developed by thats.jainam.
 
 ## Data safety form
-- Does your app collect or share any of the required user data types? No.
-- Is all of the user data collected by your app encrypted in transit? Not applicable, no data leaves the device.
-- Do you provide a way for users to request that their data is deleted? Not applicable, no data is collected.
+- Does your app collect or share any of the required user data types? No (data never leaves the device).
+- Is all of the user data collected by your app encrypted in transit? Not applicable — no data leaves the device.
+- Do you provide a way for users to request that their data is deleted? Yes, in the privacy policy: users clear app storage or uninstall; nothing is stored on our servers.
 - Permissions to explain if asked: POST_NOTIFICATIONS, only for the optional focus reminders.
+- Local-only data (settings, wallpaper copies, installed-app list) is disclosed in the privacy policy but is not "collected" under Play rules (never transmitted off-device).
 
 ## Content rating and audience
 - Answer the IARC questionnaire honestly: no violence, no user-generated content, no purchases, no ads.
@@ -64,7 +65,7 @@ Developed by thats.jainam.
 - Say clearly in the listing that this is a home screen replacement.
 - Do not describe it as parental control or as an app blocker. It hides apps inside the launcher and sends reminders, it does not block other launchers or apps.
 - Reminders are inexact alarms and can arrive a little late when the phone is in battery saver.
-- Privacy policy URL (enter in Play Console): https://jainam662010-boop.github.io/StudentLauncher/privacy.html
+- Privacy policy URL (enter in Play Console): https://jainam662010-boop.github.io/StudentLauncher/privacy.html (source: docs/privacy.html — push this file to GitHub Pages after edits)
 
 ## Store graphics included
 - `store/icon-512.png` (512 x 512 app icon)
