@@ -43,12 +43,13 @@ fun WallpaperEditor(vm: LauncherViewModel) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     val dark = c.dark
-    val isPhoto = vm.wallpaper == "photo"
-    var blur by remember { mutableFloatStateOf(vm.wpBlur) }
-    var dim by remember { mutableFloatStateOf(vm.wpDim) }
-    var zoom by remember { mutableFloatStateOf(vm.wpZoom) }
-    var panX by remember { mutableFloatStateOf(vm.wpPanX) }
-    var panY by remember { mutableFloatStateOf(vm.wpPanY) }
+    val isPhoto = vm.wallpaper == "photo" || vm.wallpaper == "shuffle"
+    val startAdj = vm.currentWpAdjust()
+    var blur by remember { mutableFloatStateOf(startAdj.blur) }
+    var dim by remember { mutableFloatStateOf(startAdj.dim) }
+    var zoom by remember { mutableFloatStateOf(startAdj.zoom) }
+    var panX by remember { mutableFloatStateOf(startAdj.panX) }
+    var panY by remember { mutableFloatStateOf(startAdj.panY) }
     var base by remember { mutableStateOf<ImageBitmap?>(null) }
     val e = enterProgress()
 
@@ -57,7 +58,8 @@ fun WallpaperEditor(vm: LauncherViewModel) {
         val hPx = constraints.maxHeight
         LaunchedEffect(vm.wallpaper, vm.wallpaperVersion, dark, wPx, hPx) {
             val id = vm.wallpaper
-            base = withContext(Dispatchers.Default) { Wallpapers.build(ctx, id, dark, wPx, hPx, WpAdjust.None).full }
+            val slot = vm.shuffleSlot
+            base = withContext(Dispatchers.Default) { Wallpapers.build(ctx, id, dark, wPx, hPx, WpAdjust.None, slot).full }
         }
 
         base?.let { b ->

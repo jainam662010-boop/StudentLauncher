@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -99,21 +100,42 @@ class LauncherColors(
     val accent: Color
 )
 
-fun launcherColors(dark: Boolean) = if (dark) {
-    LauncherColors(true, Color(0xFFF5F5F7), Color(0x99F5F5F7), Color(0x1AFFFFFF), Color(0x2EFFFFFF), Color.White, Color(0xFF111111), NothingRed)
+fun launcherColors(dark: Boolean, accent: Color = NothingRed) = if (dark) {
+    LauncherColors(true, Color(0xFFF5F5F7), Color(0x99F5F5F7), Color(0x1AFFFFFF), Color(0x2EFFFFFF), Color.White, Color(0xFF111111), accent)
 } else {
-    LauncherColors(false, Color(0xFF1C1C1E), Color(0x8C1C1C1E), Color(0x66FFFFFF), Color(0x291C1C1E), Color.White, Color.White, NothingRed)
+    LauncherColors(false, Color(0xFF1C1C1E), Color(0x8C1C1C1E), Color(0x66FFFFFF), Color(0x291C1C1E), Color.White, Color.White, accent)
 }
+
+fun accentColor(id: String): Color = when (id) {
+    "blue" -> Color(0xFF2E7CF6)
+    "green" -> Color(0xFF34C759)
+    "purple" -> Color(0xFFAF52DE)
+    "orange" -> Color(0xFFFF9500)
+    "teal" -> Color(0xFF30B0C7)
+    "pink" -> Color(0xFFFF2D55)
+    else -> NothingRed
+}
+
+fun fontFamilyOf(id: String): FontFamily = when (id) {
+    "serif" -> FontFamily.Serif
+    "mono" -> FontFamily.Monospace
+    else -> FontFamily.Default
+}
+
+val LocalFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 
 val LocalColors = staticCompositionLocalOf { launcherColors(false) }
 /** 0 means Android reduced motion is enabled; 1 is the normal calm motion profile. */
 val LocalMotionScale = staticCompositionLocalOf { 1f }
 
-/** Text colour choice for a widget: theme, always light, always dark, or Nothing red. */
+/** Text colour choice for a widget: theme, always light, always dark, or an accent name. */
 fun toneColor(tone: String, c: LauncherColors): Color = when (tone) {
     "light" -> Color.White
     "dark" -> Color(0xFF1C1C1E)
     "red" -> c.accent
+    "blue" -> Color(0xFF2E7CF6)
+    "green" -> Color(0xFF34C759)
+    "purple" -> Color(0xFFAF52DE)
     else -> c.fg
 }
 
@@ -135,6 +157,7 @@ fun Txt(
             color = color,
             fontSize = size.sp,
             fontWeight = weight,
+            fontFamily = LocalFontFamily.current,
             textAlign = align,
             textDecoration = if (strike) TextDecoration.LineThrough else TextDecoration.None
         ),
@@ -212,19 +235,21 @@ fun GlassSlider(
     val frac = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
     Box(
         modifier.fillMaxWidth().height(32.dp).onSizeChanged { w = it.width }.pointerInput(range) {
-            awaitEachGesture {
-                val d = awaitFirstDown(requireUnconsumed = false)
-                d.consume()
-                fun set(x: Float) {
-                    cb(range.start + (range.endInclusive - range.start) * (x / w).coerceIn(0f, 1f))
+            while (true) {
+                awaitEachGesture {
+                    val d = awaitFirstDown(requireUnconsumed = false)
+                    d.consume()
+                    fun set(x: Float) {
+                        cb(range.start + (range.endInclusive - range.start) * (x / w).coerceIn(0f, 1f))
+                    }
+                    set(d.position.x)
+                    do {
+                        val e = awaitPointerEvent()
+                        val ch = e.changes.first()
+                        set(ch.position.x)
+                        ch.consume()
+                    } while (e.changes.any { it.pressed })
                 }
-                set(d.position.x)
-                do {
-                    val e = awaitPointerEvent()
-                    val ch = e.changes.first()
-                    set(ch.position.x)
-                    ch.consume()
-                } while (e.changes.any { it.pressed })
             }
         },
         contentAlignment = Alignment.CenterStart

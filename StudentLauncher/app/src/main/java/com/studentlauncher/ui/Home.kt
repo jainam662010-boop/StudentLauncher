@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -43,7 +44,6 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -69,10 +70,13 @@ import com.studentlauncher.LauncherViewModel
 import com.studentlauncher.data.AlphaSide
 import com.studentlauncher.data.AppInfo
 import com.studentlauncher.data.DockStyle
-import com.studentlauncher.data.MenuType
 import com.studentlauncher.data.ThemeMode
 import com.studentlauncher.data.ViewMode
 import com.studentlauncher.data.InternalDestination
+import com.studentlauncher.mindful.ui.AppLimitsSheet
+import com.studentlauncher.mindful.ui.MindfulDoor
+import com.studentlauncher.mindful.ui.MindfulSettingsSheet
+import com.studentlauncher.mindful.ui.MindfulTicker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,6 +86,7 @@ import kotlinx.coroutines.withContext
 fun LauncherRoot(
     vm: LauncherViewModel,
     pickPhoto: () -> Unit,
+    pickShufflePhotos: () -> Unit,
     addWidget: (AppWidgetProviderInfo) -> Unit,
     askNotifications: () -> Unit
 ) {
@@ -90,7 +95,7 @@ fun LauncherRoot(
         ThemeMode.Dark -> true
         ThemeMode.System -> isSystemInDarkTheme()
     }
-    val colors = remember(dark) { launcherColors(dark) }
+    val colors = remember(dark, vm.accentId) { launcherColors(dark, accentColor(vm.accentId)) }
     val view = LocalView.current
     val ctx = LocalContext.current
 
@@ -110,12 +115,18 @@ fun LauncherRoot(
 
         LaunchedEffect(vm.wallpaper, vm.wallpaperVersion, dark, wPx, hPx) {
             val id = vm.wallpaper
-            val adj = WpAdjust(vm.wpBlur, vm.wpDim, vm.wpZoom, vm.wpPanX, vm.wpPanY)
-            set = withContext(Dispatchers.Default) { Wallpapers.build(ctx, id, dark, wPx, hPx, adj) }
+            val adj = vm.currentWpAdjust()
+            val slot = vm.shuffleSlot
+            set = withContext(Dispatchers.Default) { Wallpapers.build(ctx, id, dark, wPx, hPx, adj, slot) }
         }
         val env = remember(set, dark) { GlassEnv(set?.blurred, dark) }
 
-        CompositionLocalProvider(LocalColors provides colors, LocalGlass provides env, LocalMotionScale provides vm.effectiveMotion()) {
+        CompositionLocalProvider(
+            LocalColors provides colors,
+            LocalGlass provides env,
+            LocalMotionScale provides vm.effectiveMotion(),
+            LocalFontFamily provides fontFamilyOf(vm.uiFont)
+        ) {
             set?.let { s ->
                 val motion = LocalMotionScale.current
                 Crossfade(s, animationSpec = tween((700 * motion).coerceAtLeast(1f).toInt()), label = "wallpaper") { cur ->
@@ -123,10 +134,59 @@ fun LauncherRoot(
                 }
             }
             when {
-                !vm.onboardingComplete -> Onboarding(vm, askNotifications)
+                !vm.onboardingComplete -> OnboardingFlow(vm)
                 vm.destination == InternalDestination.Plan -> PlanApp(vm)
-                vm.destination == InternalDestination.Settings -> SettingsApp(vm, pickPhoto, askNotifications)
+                vm.destination == InternalDestination.Settings -> SettingsApp(vm, pickPhoto, pickShufflePhotos, askNotifications)
                 else -> HomeLayer(vm, pickPhoto, addWidget, askNotifications, maxWidth, maxHeight)
+            }
+            SharedSheets(vm, addWidget)
+            MindfulTicker(vm.mindful)
+        }
+    }
+}
+
+// ponytail: shared overlays live here so Settings/Plan get PIN, wallpaper, widget sheets too
+@Composable
+private fun SharedSheets(vm: LauncherViewModel, addWidget: (AppWidgetProviderInfo) -> Unit) {
+    if (vm.widgetCenter) WidgetCenter(vm, addWidget)
+    val ew = vm.editWidgetId
+    if (ew != null) key(ew) { WidgetSettings(vm, ew) }
+    if (vm.aboutOpen) AboutSheet(vm)
+    if (vm.wallpaperEditor) WallpaperEditor(vm)
+    val pinReq = vm.pinRequest
+    if (pinReq != null) key(pinReq) { PinSheet(vm, pinReq) }
+    if (vm.mindful.settingsOpen) MindfulSettingsSheet(vm.mindful)
+    if (vm.mindful.appLimitsOpen) AppLimitsSheet(vm)
+    if (vm.pickHomeApps) HomeAppPicker(vm)
+}
+
+// ponytail: one sheet, reuses togglePin + BottomSheet — no new abstractions
+@Composable
+private fun HomeAppPicker(vm: LauncherViewModel) {
+    val c = LocalColors.current
+    BottomSheet({ vm.pickHomeApps = false }) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Txt("Pick home apps", 17f, c.fg, FontWeight.Medium, modifier = Modifier.weight(1f))
+            Txt("${vm.pinned.size}/${vm.homeAppLimit}", 12f, c.fg2)
+            Spacer(Modifier.width(10.dp))
+            PillButton("Done", { vm.pickHomeApps = false }, filled = true)
+        }
+        Spacer(Modifier.height(8.dp))
+        Txt("Tap to pin or unpin. Home holds up to your limit.", 12f, c.fg2, maxLines = 2)
+        Spacer(Modifier.height(6.dp))
+        vm.apps.forEach { app ->
+            val on = app.pkg in vm.pinned
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp).tap {
+                    if (on || vm.pinned.size < vm.homeAppLimit) vm.togglePin(app.pkg)
+                    else vm.toast = "Home holds ${vm.homeAppLimit} apps"
+                },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AppIconView(app, vm, 36.dp)
+                Spacer(Modifier.width(12.dp))
+                Txt(app.label, 15f, c.fg, modifier = Modifier.weight(1f))
+                if (on) Txt("on home", 11f, c.accent)
             }
         }
     }
@@ -177,15 +237,19 @@ fun HomeLayer(
 
     val launchApp: (AppInfo, Rect) -> Unit = { app, rect ->
         vm.ctxApp = null
-        if (app.pkg in vm.flagged && vm.pauseSec > 0) {
-            vm.pauseApp = app
-            vm.pauseRect = rect
+        if (app.pkg in vm.flagged && !vm.isUnlocked(app.pkg)) {
+            if (vm.mindfulEnabled) vm.mindful.beginDoor(app, rect)
+            else if (vm.effectivePauseSec() > 0) {
+                vm.pauseApp = app
+                vm.pauseRect = rect
+            } else {
+                launching = LaunchAnim(app, rect)
+            }
         } else {
             launching = LaunchAnim(app, rect)
         }
     }
     val openMenu: (AppInfo, Rect) -> Unit = { app, rect ->
-        vm.menu = MenuType.None
         vm.ctxApp = app
         vm.ctxRect = rect
     }
@@ -213,7 +277,7 @@ fun HomeLayer(
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                beyondViewportPageCount = 1
+                beyondViewportPageCount = 0
             ) { page ->
                 if (page == 0) {
                     HomePageContent(vm, launchApp, openMenu, prog, showHome, showPanel, compact)
@@ -237,6 +301,22 @@ fun HomeLayer(
             key(ca.pkg) { ContextMenu(vm, ca, vm.ctxRect, screenW, topLimitPx) }
         }
 
+        val door = vm.mindful.door
+        if (door != null) {
+            key(door.app.pkg) {
+                MindfulDoor(
+                    vm, door,
+                    onProceed = { planned ->
+                        vm.mindful.proceed(planned)
+                        launching = LaunchAnim(door.app, door.rect)
+                    },
+                    onCancel = { vm.mindful.cancelDoor(true) }
+                )
+            }
+        }
+        if (vm.mindful.settingsOpen) MindfulSettingsSheet(vm.mindful)
+        if (vm.mindful.appLimitsOpen) AppLimitsSheet(vm)
+
         val pa = vm.pauseApp
         if (pa != null) {
             key(pa.pkg) {
@@ -248,11 +328,14 @@ fun HomeLayer(
             }
         }
 
-        if (vm.widgetCenter) WidgetCenter(vm, addWidget)
-        val ew = vm.editWidgetId
-        if (ew != null) key(ew) { WidgetSettings(vm, ew) }
-        if (vm.aboutOpen) AboutSheet(vm)
-        if (vm.wallpaperEditor) WallpaperEditor(vm)
+        val bt = vm.activeBrainTask
+        if (bt != null) {
+            when (bt) {
+                "flashcard" -> FlashcardSheet(onComplete = { vm.completeBrainTask() }, onDismiss = { vm.activeBrainTask = null })
+                "math" -> MentalMathSheet(onComplete = { vm.completeBrainTask() }, onDismiss = { vm.activeBrainTask = null })
+                "breathe" -> BreatheSheet(onComplete = { vm.completeBrainTask() }, onDismiss = { vm.activeBrainTask = null })
+            }
+        }
 
         AnimatedVisibility(
             vm.toast != null,
@@ -272,8 +355,8 @@ private fun QuietHomeHeader(vm: LauncherViewModel, modifier: Modifier = Modifier
     val is24 = android.text.format.DateFormat.is24HourFormat(LocalContext.current)
     Row(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")).uppercase(), 11f, c.fg2, androidx.compose.ui.text.font.FontWeight.Bold)
-            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern(if (is24) "HH:mm" else "h:mm a")), 25f, c.fg, androidx.compose.ui.text.font.FontWeight.SemiBold)
+            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")).uppercase(), 11f, c.fg2, FontWeight.Bold)
+            Txt(now.format(java.time.format.DateTimeFormatter.ofPattern(if (is24) "HH:mm" else "h:mm a")), 25f, c.fg, FontWeight.SemiBold)
         }
         PillButton("Plan", { vm.destination = InternalDestination.Plan })
     }
@@ -281,6 +364,20 @@ private fun QuietHomeHeader(vm: LauncherViewModel, modifier: Modifier = Modifier
 
 // Phase 1: page 0 of the Home <-> Board pager. Extracted verbatim so the
 // Home <-> All panel transition (prog) behaves exactly as before.
+
+/** Max height for the home app strip: 8 visible apps (2×4 grid or 8 list rows). */
+internal fun homeAppsWindowMax(showNames: Boolean, isGrid: Boolean): Dp =
+    if (isGrid) {
+        // row = 4+56+(6+~14 label if names)+4 ≈ 84/64; +10dp between rows (AppViews.kt)
+        val row = if (showNames) 84.dp else 64.dp
+        row * 2 + 10.dp
+    } else {
+        50.dp * 8
+    }
+
+private fun homeAppsWindowMax(vm: LauncherViewModel): Dp =
+    homeAppsWindowMax(vm.showNames, vm.layout == com.studentlauncher.data.HomeLayout.Grid)
+
 @Composable
 private fun HomePageContent(
     vm: LauncherViewModel,
@@ -334,6 +431,9 @@ private fun HomePageContent(
                             transformOrigin = TransformOrigin(0f, 1f)
                             depthBlur(p)
                         }
+                        // Cap at 8 visible apps (2 grid rows / 8 list rows) so widgets/clock keep space;
+                        // overflow scrolls inside this window.
+                        .heightIn(max = homeAppsWindowMax(vm))
                         .verticalScroll(rememberScrollState())
                         .padding(start = startPad, end = endPad)
                 )

@@ -75,6 +75,11 @@ half4 main(float2 coord) {
 @RequiresApi(33)
 private fun newGlassShader(): Any = RuntimeShader(GLASS_AGSL)
 
+// ponytail: one shared RuntimeShader for every glass surface (UI thread draws are sequential)
+private val sharedGlassShader: Any? by lazy {
+    if (Build.VERSION.SDK_INT >= 33) newGlassShader() else null
+}
+
 @RequiresApi(33)
 private fun DrawScope.refract(shaderAny: Any, bitmapShader: Shader, origin: Offset, r: Float) {
     val s = shaderAny as RuntimeShader
@@ -95,7 +100,7 @@ fun Modifier.glass(radius: Dp = 26.dp): Modifier = composed {
     val env = LocalGlass.current
     val dark = env.dark
     var origin by remember { mutableStateOf(Offset.Zero) }
-    val agsl: Any? = remember { if (Build.VERSION.SDK_INT >= 33) newGlassShader() else null }
+    val agsl: Any? = if (Build.VERSION.SDK_INT >= 33) sharedGlassShader else null
     val shape = RoundedCornerShape(radius)
     val shadowC = Color.Black.copy(alpha = if (dark) 0.55f else 0.14f)
 

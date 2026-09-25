@@ -247,26 +247,28 @@ fun AlphaScrubber(vm: LauncherViewModel, letterH: Dp, modifier: Modifier = Modif
             .width(30.dp)
             .onSizeChanged { heightPx = it.height }
             .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    var i = indexAt(down.position.y)
-                    active = i
-                    vm.onScrub(i)
-                    do {
-                        val ev = awaitPointerEvent()
-                        val ch = ev.changes.first()
-                        val ni = indexAt(ch.position.y)
-                        if (ni != i) {
-                            i = ni
-                            active = i
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            vm.onScrub(i)
-                        }
-                        ch.consume()
-                    } while (ev.changes.any { it.pressed })
-                    vm.onScrubRelease(i)
-                    active = -1
+                while (true) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        var i = indexAt(down.position.y)
+                        active = i
+                        vm.onScrub(i)
+                        do {
+                            val ev = awaitPointerEvent()
+                            val ch = ev.changes.first()
+                            val ni = indexAt(ch.position.y)
+                            if (ni != i) {
+                                i = ni
+                                active = i
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                vm.onScrub(i)
+                            }
+                            ch.consume()
+                        } while (ev.changes.any { it.pressed })
+                        vm.onScrubRelease(i)
+                        active = -1
+                    }
                 }
             },
         horizontalAlignment = Alignment.CenterHorizontally

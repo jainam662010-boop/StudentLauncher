@@ -23,18 +23,20 @@ object FocusReminders {
     private const val NOTIF_ID = 4242
     private const val REQ = 7001
 
-    fun start(ctx: Context, pkg: String, label: String, intervalMin: Int) {
-        if (intervalMin > 0) schedule(ctx, pkg, label, intervalMin, 1)
+    /** First reminder after [firstMin] minutes, then every [repeatMin] minutes (0 = only once). */
+    fun start(ctx: Context, pkg: String, label: String, firstMin: Int, repeatMin: Int) {
+        if (firstMin > 0) schedule(ctx, pkg, label, firstMin, repeatMin, firstMin)
     }
 
-    fun schedule(ctx: Context, pkg: String, label: String, intervalMin: Int, count: Int) {
+    /** [elapsedMin] is how long you will have been in the app when this reminder fires. */
+    fun schedule(ctx: Context, pkg: String, label: String, delayMin: Int, repeatMin: Int, elapsedMin: Int) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val i = Intent(ctx, FocusReminderReceiver::class.java)
             .putExtra("pkg", pkg).putExtra("label", label)
-            .putExtra("interval", intervalMin).putExtra("count", count)
+            .putExtra("repeat", repeatMin).putExtra("elapsed", elapsedMin)
         val pi = PendingIntent.getBroadcast(ctx, REQ, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         // Inexact on purpose: needs no exact-alarm permission. May arrive a little late in Doze.
-        am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + intervalMin * 60_000L, pi)
+        am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + delayMin * 60_000L, pi)
     }
 
     fun cancel(ctx: Context) {
@@ -76,9 +78,9 @@ class FocusReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val pkg = intent.getStringExtra("pkg") ?: return
         val label = intent.getStringExtra("label") ?: "this app"
-        val interval = intent.getIntExtra("interval", 10)
-        val count = intent.getIntExtra("count", 1)
-        FocusReminders.notify(context, label, interval * count)
-        FocusReminders.schedule(context, pkg, label, interval, count + 1)
+        val repeat = intent.getIntExtra("repeat", 0)
+        val elapsed = intent.getIntExtra("elapsed", repeat)
+        FocusReminders.notify(context, label, elapsed)
+        if (repeat > 0) FocusReminders.schedule(context, pkg, label, repeat, repeat, elapsed + repeat)
     }
 }

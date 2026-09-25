@@ -20,6 +20,19 @@ object WT {
     const val SPHERE = "sphere"
     const val GLYPH = "glyph"
     const val ANDROID = "android"
+    const val TODAY = "today"
+    const val MINDFUL_TODAY = "mindful_today"
+    const val MINDFUL_WEEK = "mindful_week"
+    const val EXPENSES = "expenses"
+    const val PLANNER = "planner"
+    const val REMINDERS = "reminders"
+    const val POMODORO = "pomodoro"
+    const val FLASHCARDS = "flashcards"
+    const val HABITS = "habits"
+    const val GPA = "gpa"
+    const val WATER = "water"
+    const val FORMULAS = "formulas"
+    const val ASSIGNMENTS = "assignments"
 
     val catalog: List<Triple<String, String, String>> = listOf(
         Triple(CLOCK, "Clock", "Dot, digital, words or analog"),
@@ -32,7 +45,20 @@ object WT {
         Triple(TASKS, "Tasks", "A tiny checklist"),
         Triple(QUICK, "Quick settings", "Shortcuts to Wi-Fi, Bluetooth and more"),
         Triple(SPHERE, "3D sphere", "Drag to spin it"),
-        Triple(GLYPH, "Glyph matrix", "25 by 25 dot display, tap to change")
+        Triple(GLYPH, "Glyph matrix", "25 by 25 dot display, tap to change"),
+        Triple(TODAY, "Today", "Screen time vs daily budget"),
+        Triple(MINDFUL_TODAY, "Mindful today", "Minutes on distracting apps against your budget"),
+        Triple(MINDFUL_WEEK, "Mindful week", "Seven days and what saying no saved"),
+        Triple(EXPENSES, "Expenses", "Track spending against a monthly budget"),
+        Triple(PLANNER, "Planner", "Your class schedule at a glance"),
+        Triple(REMINDERS, "Reminders", "Quick timed reminders"),
+        Triple(POMODORO, "Pomodoro", "Focus timer with short breaks"),
+        Triple(FLASHCARDS, "Flashcards", "Study with quick flip cards"),
+        Triple(HABITS, "Habits", "Tick off daily habits"),
+        Triple(GPA, "GPA", "Track your GPA by course"),
+        Triple(WATER, "Water", "Log glasses of water"),
+        Triple(FORMULAS, "Formulas", "Pin a formula for quick reference"),
+        Triple(ASSIGNMENTS, "Assignments", "Track assignment due dates")
     )
 
     fun title(type: String): String =
@@ -49,23 +75,24 @@ data class WidgetItem(
     val tone: String = "auto",
     val cfg: Map<String, String> = emptyMap()
 ) {
-    /** Backward compat: small widgets pair as half-width. */
-    val effectiveHalf: Boolean get() = half || height <= 1
+    /** Explicit width flag — independent of height (small+full and tall+half both valid). */
+    val effectiveHalf: Boolean get() = half
     fun get(key: String, def: String = ""): String = cfg[key] ?: def
     fun put(key: String, value: String): WidgetItem = copy(cfg = cfg + (key to value))
 }
 
 fun newWidget(type: String): WidgetItem {
     val h = when (type) {
-        WT.DATE, WT.BATTERY, WT.NEXT, WT.COUNTDOWN, WT.TIMER -> 1
-        WT.TASKS, WT.QUICK, WT.SPHERE, WT.GLYPH -> 2
+        WT.DATE, WT.BATTERY, WT.NEXT, WT.COUNTDOWN, WT.TIMER, WT.WATER, WT.POMODORO -> 1
+        WT.TASKS, WT.QUICK, WT.SPHERE, WT.GLYPH, WT.TODAY, WT.PLANNER, WT.FLASHCARDS, WT.FORMULAS, WT.ASSIGNMENTS, WT.REMINDERS -> 2
         else -> 2
     }
     return WidgetItem(
         id = UUID.randomUUID().toString(),
         type = type,
         height = h,
-        half = h <= 1,
+        half = h <= 1 || type in setOf(WT.WATER, WT.POMODORO),
+        size = if (type in setOf(WT.PLANNER, WT.FLASHCARDS, WT.FORMULAS, WT.ASSIGNMENTS, WT.REMINDERS)) 1 else 0,
         cfg = when (type) {
             WT.CLOCK -> mapOf("style" to "Dot", "fmt" to "sys", "date" to "1", "quote" to "1")
             WT.NEXT -> mapOf("title" to "Physics", "time" to "10:30")
@@ -73,6 +100,13 @@ fun newWidget(type: String): WidgetItem {
             WT.TIMER -> mapOf("min" to "25", "start" to "0")
             WT.GLYPH -> mapOf("mode" to "Pulse")
             WT.WEEK -> mapOf("mon" to "1")
+            WT.TODAY -> emptyMap()
+            WT.EXPENSES -> mapOf("budget" to "2000", "month" to java.time.YearMonth.now().toString())
+            WT.POMODORO -> mapOf("focus" to "25", "brk" to "5", "phase" to "focus", "start" to "0", "rounds" to "0")
+            WT.HABITS -> mapOf("names" to "Read|Exercise|Sleep by 11")
+            WT.GPA -> mapOf("rows" to "")
+            WT.WATER -> mapOf("goal" to "8", "date" to "", "count" to "0")
+            WT.FORMULAS -> mapOf("title" to "Formula", "body" to "")
             else -> emptyMap()
         }
     )

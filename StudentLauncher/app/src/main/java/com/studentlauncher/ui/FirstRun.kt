@@ -2,11 +2,13 @@ package com.studentlauncher.ui
 
 import android.content.Intent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -146,9 +149,10 @@ fun Onboarding(vm: LauncherViewModel, requestNotifications: () -> Unit) {
 }
 
 @Composable
-fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, requestNotifications: () -> Unit) {
+fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, pickShufflePhotos: () -> Unit, requestNotifications: () -> Unit) {
     val c = LocalColors.current
     val ctx = LocalContext.current
+    androidx.activity.compose.BackHandler { vm.back() }
     Column(
         Modifier
             .fillMaxSize()
@@ -170,6 +174,25 @@ fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, requestNotificatio
 
         SettingSection("Focus") {
             SwitchSetting("Study mode", "Hide apps marked distracting", vm.studyMode, vm::applyStudyMode)
+            SwitchSetting("Mindful Mode", "Escalating pauses + session tracking", vm.mindfulEnabled, vm::applyMindful)
+            AnimatedVisibility(vm.mindfulEnabled) {
+                Column {
+                    SwitchSetting("Escalating pause", "Delay grows each time you open a distracting app", vm.escalatingEnabled, vm::applyEscalating)
+                    SwitchSetting("Session tracking", "Track time in distracting apps", vm.trackingEnabled, vm::applyTracking)
+                    SwitchSetting("Earn your scroll", "Do a quick task to unlock for 10 min", vm.earnScrollEnabled, vm::applyEarnScroll)
+                    Spacer(Modifier.height(6.dp))
+                    Txt("Daily budget: ${vm.dailyBudgetMin} min", 12f, c.fg2)
+                    Segmented(
+                        listOf(30 to "30 min", 60 to "60 min", 90 to "90 min", 120 to "2h"),
+                        vm.dailyBudgetMin,
+                        vm::applyDailyBudget
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    PillButton("Mindful Mode settings", { vm.mindful.settingsOpen = true })
+                    Spacer(Modifier.height(8.dp))
+                    PillButton("App limits", { vm.mindful.appLimitsOpen = true })
+                }
+            }
             Segmented(
                 listOf(0 to "No pause", 5 to "5 sec", 10 to "10 sec"),
                 vm.pauseSec,
@@ -180,10 +203,20 @@ fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, requestNotificatio
             Segmented(
                 listOf(5 to "5 min", 10 to "10 min", 15 to "15 min"),
                 vm.reminderMin,
-                vm::applyReminderMin
+                { v -> vm.applyReminderMin(v); if (v > 0) requestNotifications() }
             )
             Spacer(Modifier.height(8.dp))
             PillButton("Allow reminders", requestNotifications)
+            Spacer(Modifier.height(8.dp))
+            if (!vm.pinSet) {
+                PillButton("Set a PIN", { vm.requestCreatePin() })
+            } else {
+                SwitchSetting("Protect Study mode with PIN", null, vm.protectStudy, vm::applyProtectStudy)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PillButton("Change PIN", { vm.requestChangePin() }, Modifier.weight(1f))
+                    PillButton("Remove PIN", { vm.requestRemovePin() }, Modifier.weight(1f))
+                }
+            }
         }
 
         SettingSection("Appearance") {
@@ -192,6 +225,80 @@ fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, requestNotificatio
                 vm.themeMode,
                 vm::applyTheme
             )
+            Spacer(Modifier.height(10.dp))
+            Txt("Wallpaper", 12f, c.fg2)
+            val previews = remember(c.dark) {
+                Wallpapers.presets.map { it to Wallpapers.preset(it, c.dark, 96, 96).asImageBitmap() }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                previews.forEach { (id, bmp) ->
+                    val on = vm.wallpaper == id
+                    androidx.compose.foundation.Image(
+                        bmp, id, Modifier.size(34.dp).clip(CircleShape)
+                            .border(if (on) 2.dp else 0.8.dp, if (on) c.fg else c.fg2.copy(alpha = 0.3f), CircleShape)
+                            .tap { vm.applyWallpaper(id) },
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                }
+                val photo = vm.wallpaper == "photo"
+                Box(
+                    Modifier.size(34.dp).clip(CircleShape).background(c.track)
+                        .border(if (photo) 2.dp else 0.8.dp, if (photo) c.fg else c.fg2.copy(alpha = 0.3f), CircleShape)
+                        .tap { pickPhoto() },
+                    contentAlignment = Alignment.Center
+                ) { Txt("+", 18f, c.fg) }
+                val shuffleOn = vm.wallpaper == "shuffle"
+                Box(
+                    Modifier.size(34.dp).clip(CircleShape).background(c.accent)
+                        .border(if (shuffleOn) 2.dp else 0.8.dp, if (shuffleOn) c.fg else c.fg2.copy(alpha = 0.3f), CircleShape)
+                        .tap { vm.applyWallpaper("shuffle") },
+                    contentAlignment = Alignment.Center
+                ) { Txt("S", 13f, Color.White, FontWeight.Bold) }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (vm.wallpaper == "shuffle") {
+                Txt("Shuffle photos (one per day)", 12f, c.fg2)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    (0 until Wallpapers.MAX_SHUFFLE).forEach { i ->
+                        val filled = i < vm.shuffleCount
+                        Box(
+                            Modifier.size(44.dp).clip(CircleShape)
+                                .background(if (filled) c.track else c.track.copy(alpha = 0.4f))
+                                .border(if (i == vm.shuffleSlot && filled) 2.dp else 0.8.dp, if (i == vm.shuffleSlot && filled) c.accent else c.fg2.copy(alpha = 0.3f), CircleShape)
+                                .tap {
+                                    if (filled) vm.removeShuffleSlot(i)
+                                    else pickShufflePhotos()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Txt(if (filled) "×" else "+", 16f, if (filled) c.fg else c.fg2)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                PillButton("Pick photos (up to 5)", pickShufflePhotos)
+                Spacer(Modifier.height(6.dp))
+                Txt("Tap a filled circle to remove that photo.", 11f, c.fg2, maxLines = 2)
+                Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            PillButton("Adjust wallpaper", { vm.wallpaperEditor = true })
+            Spacer(Modifier.height(10.dp))
+            Txt("Accent", 12f, c.fg2)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("red", "blue", "green", "purple", "orange", "teal", "pink").forEach { id ->
+                    val col = accentColor(id)
+                    val on = vm.accentId == id
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(col)
+                            .border(if (on) 2.dp else 0.8.dp, if (on) c.fg else c.fg2.copy(alpha = 0.3f), CircleShape)
+                            .tap { vm.applyAccent(id) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Txt("Font", 12f, c.fg2)
+            Segmented(listOf("system" to "System", "serif" to "Serif", "mono" to "Mono"), vm.uiFont, vm::applyUiFont)
             Spacer(Modifier.height(10.dp))
             SwitchSetting("Compact density", "Fit more without changing text size", vm.compactDensity, vm::applyCompactDensity)
             Txt("Motion", 12f, c.fg2, modifier = Modifier.padding(top = 14.dp))
@@ -209,6 +316,15 @@ fun SettingsApp(vm: LauncherViewModel, pickPhoto: () -> Unit, requestNotificatio
             Segmented(listOf(HomeLayout.List to "List", HomeLayout.Grid to "Grid"), vm.layout, vm::applyLayout)
             Spacer(Modifier.height(8.dp))
             SwitchSetting("Show app names", "Display labels under app icons", vm.showNames, vm::applyShowNames)
+            Spacer(Modifier.height(8.dp))
+            Txt("Home app limit: ${vm.homeAppLimit}", 12f, c.fg2)
+            Segmented(
+                listOf(4 to "4", 6 to "6", 8 to "8", 10 to "10", 12 to "12"),
+                vm.homeAppLimit,
+                vm::applyHomeAppLimit
+            )
+            Spacer(Modifier.height(8.dp))
+            PillButton("Pick home apps (${vm.pinned.size}/${vm.homeAppLimit})", { vm.pickHomeApps = true })
         }
 
         SettingSection("Dock & Navigation") {
@@ -260,7 +376,7 @@ private fun SettingSection(title: String, content: @Composable ColumnScope.() ->
 }
 
 @Composable
-private fun SwitchSetting(title: String, sub: String, on: Boolean, change: (Boolean) -> Unit) {
+private fun SwitchSetting(title: String, sub: String?, on: Boolean, change: (Boolean) -> Unit) {
     val c = LocalColors.current
     Row(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
@@ -268,7 +384,7 @@ private fun SwitchSetting(title: String, sub: String, on: Boolean, change: (Bool
     ) {
         Column(Modifier.weight(1f)) {
             Txt(title, 15f, c.fg)
-            Txt(sub, 12f, c.fg2, maxLines = 2)
+            if (sub != null) Txt(sub, 12f, c.fg2, maxLines = 2)
         }
         GlassSwitch(on, change)
     }

@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        vm.endSession() // crash recovery: close any orphan session
 
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -39,15 +40,19 @@ class MainActivity : ComponentActivity() {
         registerReceiver(pkgReceiver, filter)
 
         setContent {
-            val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
                 if (uri != null) vm.setPhotoWallpaper(uri)
+            }
+            val multiPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+                if (uris != null && uris.isNotEmpty()) vm.setShufflePhotos(uris)
             }
             val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                 if (!granted) vm.toast = "Allow notifications so reminders can appear"
             }
             LauncherRoot(
                 vm,
-                pickPhoto = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                pickPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                pickShufflePhotos = { multiPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 addWidget = { addWidget(it) },
                 askNotifications = {
                     if (Build.VERSION.SDK_INT >= 33 &&
@@ -65,8 +70,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Back on the launcher means you left the distracting app: stop the reminders.
+        // End any tracked session before cancelling reminders
+        vm.endSession()
         FocusReminders.cancel(this)
+        vm.refreshShuffleSlot()
     }
 
     override fun onStop() {

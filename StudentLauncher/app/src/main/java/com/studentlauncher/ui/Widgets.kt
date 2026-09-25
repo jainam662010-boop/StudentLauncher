@@ -9,7 +9,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -66,11 +65,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
@@ -80,6 +81,8 @@ import com.studentlauncher.LauncherViewModel
 import com.studentlauncher.data.WT
 import com.studentlauncher.data.WidgetBg
 import com.studentlauncher.data.WidgetItem
+import com.studentlauncher.mindful.ui.MindfulTodayContent
+import com.studentlauncher.mindful.ui.MindfulWeekContent
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -87,7 +90,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle as JTextStyle
 import java.time.temporal.ChronoUnit
 import java.util.Locale
-import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
@@ -186,7 +189,7 @@ fun encodeTasks(l: List<Pair<Boolean, String>>): String =
 // Widget area
 // ---------------------------------------------------------------------------------------------
 
-private fun buildRows(items: List<WidgetItem>): List<List<WidgetItem>> {
+internal fun buildRows(items: List<WidgetItem>): List<List<WidgetItem>> {
     val rows = mutableListOf<List<WidgetItem>>()
     var i = 0
     while (i < items.size) {
@@ -215,7 +218,6 @@ fun Widgets(vm: LauncherViewModel, padStart: Dp, padEnd: Dp, compact: Boolean, m
     Column(
         modifier
             .fillMaxWidth()
-            .animateContentSize(Motion.Size)
             .heightIn(max = maxH)
             .verticalScroll(rememberScrollState())
             .padding(start = padStart, end = padEnd),
@@ -239,15 +241,48 @@ fun Widgets(vm: LauncherViewModel, padStart: Dp, padEnd: Dp, compact: Boolean, m
 }
 
 @Composable
+private fun TodayContent(w: WidgetItem, vm: LauncherViewModel, fg: Color, fg2: Color, accent: Color) {
+    val usage = vm.getTodayUsage()
+    val totalMin = usage.sumOf { it.minutes }
+    val budget = vm.dailyBudgetMin
+    val fraction = if (budget > 0) (totalMin.toFloat() / budget).coerceIn(0f, 1f) else 0f
+    Txt("Today", 11f, fg2)
+    Spacer(Modifier.height(8.dp))
+    // Budget bar
+    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(fg.copy(alpha = 0.1f))) {
+        Box(Modifier.fillMaxWidth(fraction).height(6.dp).clip(RoundedCornerShape(3.dp))
+            .background(if (fraction > 0.8f) Color(0xFFFF6B6B) else accent))
+    }
+    Spacer(Modifier.height(4.dp))
+    Txt("$totalMin / $budget min", 11f, fg2)
+    if (usage.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        usage.sortedByDescending { it.minutes }.take(4).forEach { u ->
+            val label = vm.appFor(u.pkg)?.label ?: u.pkg.substringAfterLast('.')
+            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Txt(label, 12f, fg, modifier = Modifier.weight(1f))
+                Txt("${u.minutes} min", 12f, fg2)
+            }
+        }
+    }
+    if (vm.mindfulEnabled) {
+        val pauses = vm.getPauseCount()
+        if (pauses > 0) {
+            Spacer(Modifier.height(6.dp))
+            Txt("Paused $pauses times", 11f, fg2)
+        }
+    }
+}
+
+@Composable
 private fun WidgetFrame(w: WidgetItem, vm: LauncherViewModel, content: @Composable ColumnScope.(Color, Color) -> Unit) {
     val c = LocalColors.current
     val haptic = LocalHapticFeedback.current
     val fg = toneColor(w.tone, c)
     val fg2 = fg.copy(alpha = 0.6f)
     var showMenu by remember { mutableStateOf(false) }
-    var resizeAccum by remember { mutableFloatStateOf(0f) }
 
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().animateContentSize(Motion.Size)) {
         // Widget content with long-press for context menu
         Box(
             Modifier
@@ -265,33 +300,67 @@ private fun WidgetFrame(w: WidgetItem, vm: LauncherViewModel, content: @Composab
                         showMenu = true
                     })
                 }
-                .padding(if (w.bg == WidgetBg.None) 6.dp else 16.dp)
+                .padding(if (w.bg == WidgetBg.None) 6.dp else 12.dp)
         ) {
             Column { content(fg, fg2) }
         }
 
-        // Resize handle — separate touch target, NOT inside widget gesture scope
+        // Resize strip: claim only after past-touch-slop movement (parent scroll may take it first).
+        // Vertical = height steps; horizontal = Full/Half width (drag left = half, right = full).
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(24.dp)
-                .pointerInput(w.id, w.height) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        resizeAccum = 0f
-                        do {
-                            val ev = awaitPointerEvent()
-                            val ch = ev.changes.first()
-                            resizeAccum += ch.position.y - ch.previousPosition.y
-                            ch.consume()
-                        } while (ev.changes.any { it.pressed })
-                        val steps = (resizeAccum / 36f).toInt()
-                        if (steps != 0) {
-                            val newH = (w.height + steps).coerceIn(1, 3)
-                            if (newH != w.height) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                vm.setWidgetHeight(w.id, newH)
+                .pointerInput(w.id, w.height, w.half) {
+                    while (true) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val slop = viewConfiguration.touchSlop
+                            val startX = down.position.x
+                            val startY = down.position.y
+                            var axis = 0 // 0 none, 1 vertical, 2 horizontal
+                            var accumV = 0f
+                            var accumH = 0f
+                            do {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.first()
+                                if (!ch.pressed) break
+                                if (axis == 0) {
+                                    if (ch.isConsumed) continue // parent scroll took it
+                                    val dx = ch.position.x - startX
+                                    val dy = ch.position.y - startY
+                                    if (abs(dx) > slop || abs(dy) > slop) {
+                                        axis = if (abs(dx) > abs(dy)) 2 else 1
+                                        if (axis == 1) accumV = if (dy > 0f) dy - slop else dy + slop
+                                        else accumH = if (dx > 0f) dx - slop else dx + slop
+                                        ch.consume()
+                                    }
+                                } else {
+                                    accumV += ch.position.y - ch.previousPosition.y
+                                    accumH += ch.position.x - ch.previousPosition.x
+                                    ch.consume()
+                                }
+                            } while (ev.changes.any { it.pressed })
+                            when (axis) {
+                                1 -> {
+                                    val steps = (accumV / 36f).toInt()
+                                    if (steps != 0) {
+                                        val newH = (w.height + steps).coerceIn(1, 3)
+                                        if (newH != w.height) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            vm.setWidgetHeight(w.id, newH)
+                                        }
+                                    }
+                                }
+                                2 -> {
+                                    if (abs(accumH) > 36f) {
+                                        val newHalf = accumH < 0f
+                                        if (newHalf != w.half) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            vm.updateWidget(w.id) { it.copy(half = newHalf) }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -313,6 +382,7 @@ private fun WidgetFrame(w: WidgetItem, vm: LauncherViewModel, content: @Composab
                 onEdit = { vm.editWidgetId = w.id; showMenu = false },
                 onRemove = { vm.removeWidget(w.id); showMenu = false },
                 onSize = { h -> vm.setWidgetHeight(w.id, h); showMenu = false },
+                onWidth = { half -> vm.updateWidget(w.id) { it.copy(half = half) }; showMenu = false },
                 onDismiss = { showMenu = false }
             )
         }
@@ -320,10 +390,18 @@ private fun WidgetFrame(w: WidgetItem, vm: LauncherViewModel, content: @Composab
 }
 
 @Composable
-private fun WidgetContextMenu(w: WidgetItem, onEdit: () -> Unit, onRemove: () -> Unit, onSize: (Int) -> Unit, onDismiss: () -> Unit) {
+private fun WidgetContextMenu(
+    w: WidgetItem,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+    onSize: (Int) -> Unit,
+    onWidth: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
     val c = LocalColors.current
     val haptic = LocalHapticFeedback.current
     val labels = listOf(1 to "Small", 2 to "Medium", 3 to "Tall")
+    val widths = listOf(false to "Full", true to "Half")
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onDismiss() } }) {
         Column(
             Modifier
@@ -343,6 +421,18 @@ private fun WidgetContextMenu(w: WidgetItem, onEdit: () -> Unit, onRemove: () ->
                         Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(8.dp))
                             .background(if (selected) c.fg else c.track)
                             .tap { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onSize(h) },
+                        contentAlignment = Alignment.Center
+                    ) { Txt(label, 11f, if (selected) c.knobOn else c.fg) }
+                }
+            }
+            Txt("Width", 11f, c.fg2, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                widths.forEach { (half, label) ->
+                    val selected = w.half == half
+                    Box(
+                        Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(8.dp))
+                            .background(if (selected) c.fg else c.track)
+                            .tap { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onWidth(half) },
                         contentAlignment = Alignment.Center
                     ) { Txt(label, 11f, if (selected) c.knobOn else c.fg) }
                 }
@@ -388,6 +478,19 @@ fun WidgetBody(w: WidgetItem, vm: LauncherViewModel, compact: Boolean) {
                     DotSphere(Modifier.fillMaxSize(), fg, accent)
                 }
                 WT.GLYPH -> GlyphContent(w, vm, fg, accent, compact)
+                WT.TODAY -> TodayContent(w, vm, fg, fg2, accent)
+                WT.EXPENSES -> ExpensesContent(w, vm, fg, fg2, accent)
+                WT.PLANNER -> PlannerContent(w, vm, fg, fg2, accent)
+                WT.REMINDERS -> RemindersContent(w, vm, fg, fg2)
+                WT.POMODORO -> PomodoroContent(w, vm, fg, fg2, accent)
+                WT.FLASHCARDS -> FlashcardsContent(w, vm, fg, fg2, accent)
+                WT.HABITS -> HabitsContent(w, vm, fg, fg2, accent)
+                WT.GPA -> GpaContent(w, vm, fg, fg2, accent)
+                WT.WATER -> WaterContent(w, vm, fg, fg2, accent)
+                WT.FORMULAS -> FormulasContent(w, vm, fg, fg2)
+                WT.ASSIGNMENTS -> AssignmentsContent(w, vm, fg, fg2, accent)
+                WT.MINDFUL_TODAY -> MindfulTodayContent(vm, fg, fg2, accent)
+                WT.MINDFUL_WEEK -> MindfulWeekContent(vm, fg, fg2, accent)
             }
         }
     }
@@ -414,10 +517,23 @@ private fun ClockContent(w: WidgetItem, fg: Color, fg2: Color, accent: Color) {
         "Analog" -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
             AnalogClock(now, Modifier.size(112.dp), fg, accent)
         }
+        "Flip" -> FlipClock(now, is24, fg, accent, flap = false)
+        "Split-Flap" -> FlipClock(now, is24, fg, accent, flap = true)
+        "Retro Pixel" -> MonoText(time, 46f, fg, FontWeight.Bold)
+        "Thin" -> Txt(time, 56f, fg, FontWeight.Thin)
+        "Bold" -> Txt(time, 52f, fg, FontWeight.Black)
+        "Neon" -> NeonText(time, accent)
+        "Binary" -> MonoText(binaryTime(now, is24), 22f, accent, FontWeight.Medium)
+        "Roman" -> {
+            val h = ((now.hour + 11) % 12) + 1
+            Txt("${roman(h)}:${roman(now.minute).ifBlank { "—" }}", 42f, fg, FontWeight.Light, maxLines = 1)
+        }
+        "Gradient" -> GradientText(time, accent, fg)
         else -> DotText(time, Modifier.fillMaxWidth().aspectRatio(dotCols(time) / 7f), fg, accent)
     }
     if (w.get("date", "1") == "1") {
-        Txt(now.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault())), 12f, fg2, modifier = Modifier.padding(top = 8.dp))
+        val fmt = w.get("dateFmt", "EEE, d MMM")
+        Txt(now.format(DateTimeFormatter.ofPattern(fmt, Locale.getDefault())), 12f, fg2, modifier = Modifier.padding(top = 8.dp))
     }
     if (w.get("quote", "1") == "1") {
         AnimatedContent(
@@ -428,6 +544,97 @@ private fun ClockContent(w: WidgetItem, fg: Color, fg2: Color, accent: Color) {
             Txt(MESSAGES[i], 13f, fg, maxLines = 2, modifier = Modifier.tap { q = (q + 1) % MESSAGES.size }.padding(top = 8.dp))
         }
     }
+}
+
+private val CLOCK_STYLES = listOf(
+    "Dot", "Digital", "Words", "Analog", "Flip", "Split-Flap", "Retro Pixel",
+    "Thin", "Bold", "Neon", "Binary", "Roman", "Gradient"
+)
+
+private val DATE_FORMATS = listOf(
+    "EEE, d MMM" to "Tue, 24 Sep",
+    "dd MMM" to "24 Sep",
+    "d MMMM" to "24 September",
+    "EEEE" to "Tuesday"
+)
+
+@Composable
+private fun MonoText(text: String, size: Float, color: Color, weight: FontWeight) {
+    androidx.compose.foundation.text.BasicText(
+        text,
+        style = TextStyle(color = color, fontSize = size.sp, fontWeight = weight, fontFamily = FontFamily.Monospace)
+    )
+}
+
+@Composable
+private fun NeonText(text: String, accent: Color) {
+    androidx.compose.foundation.text.BasicText(
+        text,
+        style = TextStyle(
+            color = accent,
+            fontSize = 54.sp,
+            fontWeight = FontWeight.Bold,
+            shadow = androidx.compose.ui.graphics.Shadow(accent.copy(alpha = 0.9f), offset = androidx.compose.ui.geometry.Offset(3f, 3f), blurRadius = 14f)
+        )
+    )
+}
+
+@Composable
+private fun GradientText(text: String, accent: Color, fg: Color) {
+    // ponytail: Brush-on-text needs a newer TextStyle API; accent + white stack reads as a cheap gradient
+    Box {
+        androidx.compose.foundation.text.BasicText(
+            text,
+            style = TextStyle(color = accent.copy(alpha = 0.55f), fontSize = 54.sp, fontWeight = FontWeight.Bold)
+        )
+        androidx.compose.foundation.text.BasicText(
+            text,
+            style = TextStyle(color = fg, fontSize = 54.sp, fontWeight = FontWeight.Bold),
+            modifier = Modifier.graphicsLayer { translationY = -3f * density }
+        )
+    }
+}
+
+@Composable
+private fun FlipClock(now: LocalDateTime, is24: Boolean, fg: Color, accent: Color, flap: Boolean) {
+    val h = if (is24) String.format("%02d", now.hour) else String.format("%02d", ((now.hour + 11) % 12) + 1)
+    val m = String.format("%02d", now.minute)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlipCard(h, fg, accent, flap)
+        Txt(":", 40f, fg, FontWeight.Bold)
+        FlipCard(m, fg, accent, flap)
+    }
+}
+
+@Composable
+private fun FlipCard(text: String, fg: Color, accent: Color, flap: Boolean) {
+    Box(
+        Modifier.clip(RoundedCornerShape(8.dp)).background(fg.copy(alpha = 0.1f)).padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (flap) {
+            Box(Modifier.matchParentSize().padding(vertical = 18.dp).align(Alignment.Center)) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(fg.copy(alpha = 0.35f)))
+            }
+        }
+        Txt(text, 36f, if (flap) accent else fg, FontWeight.Bold)
+    }
+}
+
+private fun binaryTime(now: LocalDateTime, is24: Boolean): String {
+    val h = if (is24) now.hour else ((now.hour + 11) % 12) + 1
+    fun d(n: Int) = Integer.toBinaryString(n).padStart(4, '0')
+    return "${d(h / 10)} ${d(h % 10)}:${d(now.minute / 10)} ${d(now.minute % 10)}"
+}
+
+private fun roman(n: Int): String {
+    if (n <= 0) return ""
+    val vals = intArrayOf(1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1)
+    val syms = arrayOf("M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I")
+    val sb = StringBuilder()
+    var v = n
+    for (i in vals.indices) while (v >= vals[i]) { sb.append(syms[i]); v -= vals[i] }
+    return sb.toString()
 }
 
 private fun polar(c: Offset, r: Float, deg: Float): Offset {
@@ -678,9 +885,11 @@ fun GlyphMatrix(mode: String, color: Color, accent: Color, modifier: Modifier) {
     val now = rememberNow()
     var t by remember { mutableFloatStateOf(0f) }
     val motion = LocalMotionScale.current
-    LaunchedEffect(motion) {
+    // ponytail: Time mode never reads t — skip the frame loop entirely
+    LaunchedEffect(motion, mode) {
+        if (mode == "Time" || motion <= .05f) return@LaunchedEffect
         var last = -1L
-        while (motion > .05f) {
+        while (true) {
             val n = withFrameNanos { it }
             if (last >= 0) t += (n - last) / 1e9f * motion
             last = n
@@ -749,9 +958,10 @@ fun DotSphere(modifier: Modifier, color: Color, accent: Color) {
     var dragging by remember { mutableStateOf(false) }
     val motion = LocalMotionScale.current
 
-    LaunchedEffect(motion) {
+    LaunchedEffect(motion, dragging) {
+        if (motion <= .05f) return@LaunchedEffect
         var last = -1L
-        while (motion > .05f) {
+        while (true) {
             val n = withFrameNanos { it }
             if (last >= 0 && !dragging) {
                 yaw += (n - last) / 1e9f * 0.5f * motion

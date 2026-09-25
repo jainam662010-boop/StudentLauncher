@@ -23,9 +23,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.studentlauncher.LauncherViewModel
 import com.studentlauncher.data.WT
 import com.studentlauncher.data.WidgetBg
@@ -130,21 +133,76 @@ fun WidgetSettings(vm: LauncherViewModel, id: String) {
             Segmented(listOf(false to "Full", true to "Half"), w.half, { v -> vm.updateWidget(id) { it.copy(half = v) } })
             SLabel("Text color")
             Segmented(
-                listOf("auto" to "Auto", "light" to "Light", "dark" to "Dark", "red" to "Red"),
+                listOf("auto" to "Auto", "light" to "Light", "dark" to "Dark", "red" to "Red", "blue" to "Blue", "green" to "Green", "purple" to "Purple"),
                 w.tone, { v -> vm.updateWidget(id) { it.copy(tone = v) } }
             )
         }
 
         when (w.type) {
+            WT.EXPENSES -> {
+                SLabel("Monthly budget")
+                Segmented(listOf("1000" to "1000", "2000" to "2000", "5000" to "5000", "10000" to "10000"), w.get("budget", "2000"), { vm.setCfg(id, "budget", it) })
+                Spacer(Modifier.height(8.dp))
+                PillButton("Clear this month's log", { vm.setCfg(id, "log", "") })
+            }
+            WT.POMODORO -> {
+                SLabel("Focus minutes")
+                Segmented(listOf("15" to "15", "25" to "25", "45" to "45"), w.get("focus", "25"), { v -> vm.updateWidget(id) { it.put("focus", v).put("start", "0").put("phase", "focus") } })
+                SLabel("Break minutes")
+                Segmented(listOf("5" to "5", "10" to "10", "15" to "15"), w.get("brk", "5"), { v -> vm.updateWidget(id) { it.put("brk", v).put("start", "0").put("phase", "focus") } })
+            }
+            WT.HABITS -> {
+                SLabel("Habits (up to 4, separate with a comma)")
+                var draft by remember { mutableStateOf(w.get("names", "").replace("|", ", ")) }
+                GlassField(draft, "Read, Exercise, Sleep by 11", { draft = it })
+                Spacer(Modifier.height(8.dp))
+                PillButton("Save", {
+                    val names = draft.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(4).joinToString("|")
+                    vm.setCfg(id, "names", names)
+                })
+            }
+            WT.GPA -> {
+                Spacer(Modifier.height(4.dp))
+                PillButton("Clear all courses", { vm.setCfg(id, "rows", "") })
+            }
+            WT.WATER -> {
+                SLabel("Daily goal (glasses)")
+                Segmented(listOf("6" to "6", "8" to "8", "10" to "10", "12" to "12"), w.get("goal", "8"), { vm.setCfg(id, "goal", it) })
+            }
+            WT.PLANNER, WT.REMINDERS, WT.FLASHCARDS, WT.ASSIGNMENTS, WT.FORMULAS -> {
+                Spacer(Modifier.height(4.dp))
+                Txt("Edit this widget's content directly on the home screen.", 12f, c.fg2, maxLines = 2)
+            }
             WT.CLOCK -> {
                 SLabel("Style")
-                Segmented(
-                    listOf("Dot" to "Dot", "Digital" to "Digital", "Words" to "Words", "Analog" to "Analog"),
-                    w.get("style", "Dot"), { vm.setCfg(id, "style", it) }
-                )
+                val cur = w.get("style", "Dot")
+                listOf(
+                    listOf("Dot", "Digital", "Words", "Analog"),
+                    listOf("Flip", "Split-Flap", "Retro Pixel", "Thin"),
+                    listOf("Bold", "Neon", "Binary", "Roman", "Gradient")
+                ).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEach { s ->
+                            val on = s == cur
+                            Box(
+                                Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(8.dp))
+                                    .background(if (on) LocalColors.current.knob else LocalColors.current.track)
+                                    .tap { vm.setCfg(id, "style", s) },
+                                contentAlignment = Alignment.Center
+                            ) { Txt(s, 11f, if (on) Color(0xFF1C1C1E) else LocalColors.current.fg, maxLines = 1) }
+                        }
+                    }
+                }
                 SLabel("Time format")
                 Segmented(listOf("sys" to "System", "12" to "12 h", "24" to "24 h"), w.get("fmt", "sys"), { vm.setCfg(id, "fmt", it) })
                 SwitchLine("Show date", w.get("date", "1") == "1") { vm.setCfg(id, "date", if (it) "1" else "0") }
+                if (w.get("date", "1") == "1") {
+                    SLabel("Date format")
+                    Segmented(
+                        listOf("EEE, d MMM" to "Tue 24", "dd MMM" to "24 Sep", "d MMMM" to "Sep 24", "EEEE" to "Tuesday"),
+                        w.get("dateFmt", "EEE, d MMM"), { vm.setCfg(id, "dateFmt", it) }
+                    )
+                }
                 SwitchLine("Quote line", w.get("quote", "1") == "1") { vm.setCfg(id, "quote", if (it) "1" else "0") }
             }
             WT.NEXT -> {
@@ -207,7 +265,7 @@ fun AboutSheet(vm: LauncherViewModel) {
     val c = LocalColors.current
     val ctx = LocalContext.current
     val version = remember {
-        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "2.0"
+        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "3.0"
     }
     BottomSheet({ vm.aboutOpen = false }, 0.6f) {
         Row(verticalAlignment = Alignment.CenterVertically) {

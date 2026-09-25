@@ -15,7 +15,6 @@ enum class HomeLayout { List, Grid }
 enum class AlphaSide { Right, Left, Off }
 enum class DockStyle { Bottom, Rail, Off }
 enum class ViewMode { Home, All }
-enum class MenuType { None, Focus, Widgets, Style }
 enum class Chip { All, Study }
 enum class InternalDestination { Home, Plan, Settings }
 
@@ -29,3 +28,5 @@ data class PlanTask(
     val className: String = ""
 )
 data class PlanEvent(val id: String, val title: String, val date: String, val time: String = "", val course: String = "")
+
+data class DailyUsage(val pkg: String, val minutes: Int)

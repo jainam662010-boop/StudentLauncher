@@ -1,6 +1,6 @@
 package com.studentlauncher.ui
 
-import androidx.compose.animation.AnimatedVisibility
+import com.studentlauncher.data.WT
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -8,12 +8,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -169,8 +164,13 @@ private fun CtxItem(label: String, onClick: () -> Unit) {
 @Composable
 fun PauseSheet(vm: LauncherViewModel, app: AppInfo, onCancel: () -> Unit, onOpen: () -> Unit) {
     val c = LocalColors.current
-    var left by remember { mutableIntStateOf(vm.pauseSec) }
-    LaunchedEffect(Unit) { while (left > 0) { delay(1000); left-- } }
+    val delay = vm.effectivePauseSec()
+    var left by remember { mutableIntStateOf(delay) }
+    var chosen by remember { mutableIntStateOf(0) } // 0=none, 1=quick, 5=five, 15=fifteen
+    LaunchedEffect(Unit) {
+        vm.incrementPauseCount()
+        while (left > 0) { delay(1000); left-- }
+    }
     val breath = rememberInfiniteTransition(label = "breath")
     val motion = LocalMotionScale.current
     val bs by breath.animateFloat(
@@ -186,11 +186,61 @@ fun PauseSheet(vm: LauncherViewModel, app: AppInfo, onCancel: () -> Unit, onOpen
             Txt("Opening ${app.label}", 17f, c.fg, FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
             Txt("Is this what you want to do right now?", 13f, c.fg2)
+
+            if (vm.mindfulEnabled) {
+                Spacer(Modifier.height(14.dp))
+                Txt("What for?", 12f, c.fg2)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1 to "Quick check", 5 to "5 min", 15 to "15 min").forEach { (mins, label) ->
+                        val sel = chosen == mins
+                        Box(
+                            Modifier.clip(RoundedCornerShape(10.dp))
+                                .background(if (sel) c.accent else c.fg.copy(alpha = 0.1f))
+                                .tap { chosen = mins; vm.unlockApp(app.pkg, mins); onOpen() }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) { Txt(label, 13f, if (sel) c.knobOn else c.fg) }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PillButton("Not now", onCancel)
                 val ready = left == 0
-                PillButton(if (ready) "Open" else "Open in $left", { if (ready) onOpen() }, filled = ready)
+                PillButton(if (ready) "Open" else "Open in $left", {
+                    if (ready) { vm.incrementPauseCount(); onOpen() }
+                }, filled = ready)
+            }
+
+            if (vm.mindfulEnabled && vm.earnScrollEnabled) {
+                Spacer(Modifier.height(12.dp))
+                Txt("Or do something quick first:", 11f, c.fg2)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Study timer" to "timer", "Flashcard" to "flashcard", "Breathe" to "breathe").forEach { (label, task) ->
+                        Box(
+                            Modifier.clip(RoundedCornerShape(8.dp))
+                                .background(c.fg.copy(alpha = 0.08f))
+                                .tap {
+                                    if (task == "timer") {
+                                        vm.pauseApp = null
+                                        // Start the timer widget
+                                        val timer = vm.homeWidgets.firstOrNull { it.type == WT.TIMER }
+                                            ?: vm.boardWidgets.firstOrNull { it.type == WT.TIMER }
+                                        if (timer != null) vm.setCfg(timer.id, "start", System.currentTimeMillis().toString())
+                                        else vm.toast = "Add a Study timer widget first"
+                                    } else {
+                                        vm.activeBrainTask = task
+                                        vm.pauseApp = null
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) { Txt(label, 11f, c.fg2) }
+                    }
+                }
             }
         }
     }

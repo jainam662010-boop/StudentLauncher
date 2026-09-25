@@ -14,6 +14,7 @@ import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
+import java.time.LocalDate
 import kotlin.math.max
 
 class WallpaperSet(val full: ImageBitmap, val blurred: ImageBitmap)
@@ -31,6 +32,7 @@ class WpAdjust(
 
 object Wallpapers {
     val presets = listOf("dune", "mist", "meadow", "plain")
+    const val MAX_SHUFFLE = 5
 
     private class Blob(val cx: Float, val cy: Float, val r: Float, val color: Int)
     private class Spec(val base: Int, val blobs: List<Blob>)
@@ -58,10 +60,23 @@ object Wallpapers {
         return bmp
     }
 
-    private fun photoFile(ctx: Context) = File(ctx.filesDir, "wallpaper.jpg")
+    // ponytail: slot 0 keeps the legacy wallpaper.jpg name so existing users keep their photo
+    private fun photoFile(ctx: Context, slot: Int): File =
+        File(ctx.filesDir, if (slot == 0) "wallpaper.jpg" else "wallpaper$slot.jpg")
+
+    /** Which shuffle slot to show for this local day. Pure: unit-testable via epochDay. */
+    fun slotForDay(count: Int, epochDay: Long = LocalDate.now().toEpochDay()): Int {
+        if (count <= 1) return 0
+        return (epochDay % count).toInt().coerceIn(0, count - 1)
+    }
+
+    fun hasPhoto(ctx: Context, slot: Int): Boolean = photoFile(ctx, slot).exists()
+
+    fun savedCount(ctx: Context): Int =
+        (MAX_SHUFFLE downTo 1).firstOrNull { photoFile(ctx, it - 1).exists() } ?: 0
 
     /** Copies the picked image (downscaled) into app storage so it survives permission loss. */
-    fun savePhoto(ctx: Context, uri: Uri): Boolean = runCatching {
+    fun savePhoto(ctx: Context, uri: Uri, slot: Int = 0): Boolean = runCatching {
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, opts) }
         var sample = 1
@@ -69,9 +84,30 @@ object Wallpapers {
         val bmp = ctx.contentResolver.openInputStream(uri)!!.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         }!!
-        photoFile(ctx).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        photoFile(ctx, slot).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
         true
     }.getOrDefault(false)
+
+    fun removePhoto(ctx: Context, slot: Int): Boolean =
+        photoFile(ctx, slot).delete() || !photoFile(ctx, slot).exists()
+
+    /**
+     * Move photos into dense slots 0..n-1 after a hole (middle remove).
+     * Safe: renames remaining files down; deletes any trailing leftovers.
+     */
+    fun compactPhotos(ctx: Context) {
+        var write = 0
+        for (read in 0 until MAX_SHUFFLE) {
+            if (!photoFile(ctx, read).exists()) continue
+            if (write != read) {
+                val from = photoFile(ctx, read)
+                val to = photoFile(ctx, write)
+                from.renameTo(to)
+            }
+            write++
+        }
+        for (slot in write until MAX_SHUFFLE) removePhoto(ctx, slot)
+    }
 
     private fun centerCrop(src: Bitmap, w: Int, h: Int): Bitmap {
         val s = max(w / src.width.toFloat(), h / src.height.toFloat())
@@ -82,10 +118,10 @@ object Wallpapers {
         return out
     }
 
-    fun build(ctx: Context, id: String, dark: Boolean, w: Int, h: Int, adj: WpAdjust = WpAdjust.None): WallpaperSet {
+    fun build(ctx: Context, id: String, dark: Boolean, w: Int, h: Int, adj: WpAdjust = WpAdjust.None, slot: Int = 0): WallpaperSet {
         var base: Bitmap? = null
-        if (id == "photo") {
-            val f = photoFile(ctx)
+        if (id == "photo" || id == "shuffle") {
+            val f = photoFile(ctx, if (id == "shuffle") slot else 0)
             if (f.exists()) {
                 val src = BitmapFactory.decodeFile(f.path)
                 if (src != null) {
@@ -95,7 +131,8 @@ object Wallpapers {
                 }
             }
         }
-        var full: Bitmap = base ?: preset(if (id == "photo") "dune" else id, dark, w, h)
+        val fallback = if (id == "shuffle" || id == "photo") "dune" else id
+        var full: Bitmap = base ?: preset(fallback, dark, w, h)
         if (adj.zoom > 1.001f) full = zoomPan(full, adj)
         if (adj.blur > 0.01f) full = softBlur(full, adj.blur)
         if (adj.dim > 0.01f) Canvas(full).drawColor((adj.dim.coerceIn(0f, 0.8f) * 255).toInt() shl 24)
